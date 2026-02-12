@@ -21,12 +21,7 @@ builds:
 
 archives:
   - id: work-dashboard
-    builds:
-      - work-dashboard
-    formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        format: zip
+    format: '{{ if eq .Os "windows" }}zip{{ else }}tar.gz{{ end }}'
     files:
       - README.md
 
