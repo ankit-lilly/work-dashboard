@@ -31,6 +31,15 @@ type ClientManager struct {
 	Clients map[string]*Client
 }
 
+/*
+
+@doc NewClientManager initializes AWS clients for each environment defined in the configuration.
+
+This works by iterating over the environment mappings specified in the configuration file ( env:profile:region format)
+and creating a new AWS configuration. This works by looking for aws sso profiles in the user's AWS config file (typically located at ~/.aws/config) and loading the appropriate credentials and region settings for each environment.( whatever is specified in the config file for that profile)
+
+*/
+
 func NewClientManager(ctx context.Context, cfg *config.Config) (*ClientManager, error) {
 	manager := &ClientManager{
 		Clients: make(map[string]*Client),
