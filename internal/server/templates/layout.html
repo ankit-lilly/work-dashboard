@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="camp">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Viewer</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+    <script type="module" src="/static/js/datastar.js"></script>
+</head>
+<body class="bg-base-200 text-base-content">
+    <div class="min-h-screen">
+        <div class="navbar bg-base-100/90 backdrop-blur supports-[backdrop-filter]:bg-base-100/70 shadow-sm sticky top-0 z-50 border-b border-base-200 min-h-0 py-2">
+            <div class="container mx-auto px-3">
+                <div class="flex w-full items-center justify-between">
+                    <a class="btn btn-ghost btn-sm text-base font-semibold normal-case" href="/">Job Viewer</a>
+                </div>
+            </div>
+        </div>
+        <main class="container mx-auto px-4 py-6">
+            {{block "content" .}}{{end}}
+        </main>
+        <footer class="border-t bg-base-100">
+            <div class="container mx-auto px-4 py-6 text-sm text-base-content/70">
+                Job Viewer
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener("keydown", function (evt) {
+            if (evt.key !== "Escape") return;
+            document.dispatchEvent(new CustomEvent("datastar-signal-patch", {
+                detail: { json_modal_open: false, states_modal_open: false }
+            }));
+        });
+    </script>
+</body>
+</html>

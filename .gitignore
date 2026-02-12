@@ -1,0 +1,5 @@
+camp-job-viewer
+.env
+# Added by goreleaser init:
+dist/
+bin/

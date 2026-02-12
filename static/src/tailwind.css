@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@source "../../internal/server/templates/**/*.html";
+@source "../../internal/server/templates/*.html";
+
+@plugin "../js/daisyui.mjs";
+@plugin "../js/daisyui-theme.mjs" {
+  name: "camp";
+  default: true;
+  color-scheme: light;
+  --color-base-100: hsl(0 0% 100%);
+  --color-base-200: hsl(210 40% 96.1%);
+  --color-base-300: hsl(214.3 31.8% 91.4%);
+  --color-base-content: hsl(222.2 84% 4.9%);
+  --color-primary: hsl(222.2 47.4% 11.2%);
+  --color-primary-content: hsl(210 40% 98%);
+  --color-secondary: hsl(210 40% 96.1%);
+  --color-secondary-content: hsl(222.2 47.4% 11.2%);
+  --color-accent: hsl(210 40% 96.1%);
+  --color-accent-content: hsl(222.2 47.4% 11.2%);
+  --color-neutral: hsl(222.2 47.4% 11.2%);
+  --color-neutral-content: hsl(210 40% 98%);
+  --color-info: hsl(199 89% 48%);
+  --color-info-content: hsl(210 40% 98%);
+  --color-success: hsl(142.1 70.6% 45.3%);
+  --color-success-content: hsl(210 40% 98%);
+  --color-warning: hsl(38 92% 50%);
+  --color-warning-content: hsl(210 40% 98%);
+  --color-error: hsl(0 84.2% 60.2%);
+  --color-error-content: hsl(210 40% 98%);
+  --radius-box: 0.5rem;
+  --radius-field: 0.4rem;
+  --radius-selector: 0.4rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer utilities {
+  .flash-new {
+    animation: flash-new 2s ease-out;
+  }
+}
+
+@keyframes flash-new {
+  0% { background-color: #fffbeb; }
+  100% { background-color: transparent; }
+}

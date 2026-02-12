@@ -1,0 +1,332 @@
+package aws
+
+import (
+	"context"
+	"log"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/sfn"
+	"github.com/aws/aws-sdk-go-v2/service/sfn/types"
+)
+
+type Execution struct {
+	Env           string
+	Name          string
+	ExecutionName string
+	ExecutionArn  string
+	Status        string
+	StartTime     time.Time
+	StopTime      time.Time
+	Duration      string
+	ErrorType     string
+	FailureReason string
+	FailedAt      string
+	Stale         bool
+}
+
+func (c *Client) ListActiveExecutions(ctx context.Context) ([]Execution, error) {
+	stateMachines, err := c.getStateMachines(ctx, 5*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+
+	var active []Execution
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+
+	for _, sm := range stateMachines {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(sm types.StateMachineListItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			execs, err := c.listExecutionsWithRetry(ctx, &sfn.ListExecutionsInput{
+				StateMachineArn: sm.StateMachineArn,
+				StatusFilter:    types.ExecutionStatusRunning,
+				MaxResults:      10,
+			})
+			if err != nil {
+				log.Printf("ListExecutions failed for %s (%s): %v", c.EnvName, *sm.StateMachineArn, err)
+				return
+			}
+
+			local := make([]Execution, 0, len(execs.Executions))
+			for _, e := range execs.Executions {
+				if e.StartDate == nil {
+					continue
+				}
+				duration := time.Since(*e.StartDate).Round(time.Second).String()
+				local = append(local, Execution{
+					Env:           c.EnvName,
+					Name:          *sm.Name,
+					ExecutionName: *e.Name,
+					ExecutionArn:  *e.ExecutionArn,
+					Status:        string(e.Status),
+					StartTime:     *e.StartDate,
+					Duration:      duration,
+				})
+			}
+
+			if len(local) == 0 {
+				return
+			}
+			mu.Lock()
+			active = append(active, local...)
+			mu.Unlock()
+		}(sm)
+	}
+	wg.Wait()
+
+	return active, nil
+}
+
+func (c *Client) ListRecentFailures(ctx context.Context) ([]Execution, error) {
+	stateMachines, err := c.getStateMachines(ctx, 10*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+
+	var failures []Execution
+	oneDayAgo := time.Now().Add(-24 * time.Hour)
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+
+	for _, sm := range stateMachines {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(sm types.StateMachineListItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			execs, err := c.listExecutionsWithRetry(ctx, &sfn.ListExecutionsInput{
+				StateMachineArn: sm.StateMachineArn,
+				StatusFilter:    types.ExecutionStatusFailed,
+				MaxResults:      10,
+			})
+			if err != nil {
+				log.Printf("ListExecutions failed for %s (%s): %v", c.EnvName, *sm.StateMachineArn, err)
+				return
+			}
+
+			local := make([]Execution, 0, len(execs.Executions))
+			for _, e := range execs.Executions {
+				if e.StopDate == nil || e.StopDate.Before(oneDayAgo) {
+					continue
+				}
+
+				var errorType string
+				var failureReason string
+				desc, err := c.Sfn.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+					ExecutionArn: e.ExecutionArn,
+				})
+				if err != nil {
+					log.Printf("DescribeExecution failed for %s: %v", c.EnvName, err)
+				} else {
+					if desc.Error != nil {
+						errorType = *desc.Error
+					}
+					if desc.Cause != nil {
+						failureReason = *desc.Cause
+					}
+				}
+
+				local = append(local, Execution{
+					Env:           c.EnvName,
+					Name:          *sm.Name,
+					ExecutionName: *e.Name,
+					ExecutionArn:  *e.ExecutionArn,
+					Status:        string(e.Status),
+					StopTime:      *e.StopDate,
+					FailedAt:      e.StopDate.Format("15:04:05 (02 Jan)"),
+					ErrorType:     errorTypeOrDefault(errorType),
+					FailureReason: failureReason,
+				})
+			}
+
+			if len(local) == 0 {
+				return
+			}
+			mu.Lock()
+			failures = append(failures, local...)
+			mu.Unlock()
+		}(sm)
+	}
+	wg.Wait()
+
+	return failures, nil
+}
+
+func (c *Client) getStateMachines(ctx context.Context, ttl time.Duration) ([]types.StateMachineListItem, error) {
+	c.StateMachinesMu.RLock()
+	if len(c.StateMachines) > 0 && time.Since(c.StateMachinesAt) < ttl {
+		cached := make([]types.StateMachineListItem, len(c.StateMachines))
+		copy(cached, c.StateMachines)
+		c.StateMachinesMu.RUnlock()
+		return cached, nil
+	}
+	c.StateMachinesMu.RUnlock()
+
+	var all []types.StateMachineListItem
+	var nextToken *string
+	for {
+		out, err := c.Sfn.ListStateMachines(ctx, &sfn.ListStateMachinesInput{
+			MaxResults: 100,
+			NextToken:  nextToken,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, sm := range out.StateMachines {
+			if includeStateMachineName(sm.Name) {
+				all = append(all, sm)
+			}
+		}
+		if out.NextToken == nil || *out.NextToken == "" {
+			break
+		}
+		nextToken = out.NextToken
+	}
+
+	c.StateMachinesMu.Lock()
+	c.StateMachines = all
+	c.StateMachinesAt = time.Now()
+	c.StateMachinesMu.Unlock()
+
+	return all, nil
+}
+
+func (c *Client) ListFilteredStateMachines(ctx context.Context, ttl time.Duration) ([]types.StateMachineListItem, error) {
+	return c.getStateMachines(ctx, ttl)
+}
+
+func (c *Client) ListRecentExecutionsByStatus(ctx context.Context, stateMachineArn *string, status types.ExecutionStatus, cutoff time.Time, maxPages int) ([]types.ExecutionListItem, error) {
+	var out []types.ExecutionListItem
+	var nextToken *string
+
+	for page := 0; page < maxPages; page++ {
+		resp, err := c.listExecutionsWithRetry(ctx, &sfn.ListExecutionsInput{
+			StateMachineArn: stateMachineArn,
+			StatusFilter:    status,
+			MaxResults:      100,
+			NextToken:       nextToken,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, e := range resp.Executions {
+			if e.StartDate != nil && e.StartDate.Before(cutoff) {
+				return out, nil
+			}
+			out = append(out, e)
+		}
+
+		if resp.NextToken == nil || *resp.NextToken == "" {
+			break
+		}
+		nextToken = resp.NextToken
+	}
+
+	return out, nil
+}
+
+func includeStateMachineName(name *string) bool {
+	if name == nil {
+		return false
+	}
+	n := *name
+
+	if !strings.HasPrefix(n, "mdids-account-automation-relv305-") &&
+		!strings.HasPrefix(n, "mdids-account-automation-backend") &&
+		!strings.HasPrefix(n, "atom5-qa-stack-") &&
+		!strings.HasPrefix(n, "lrl-dtf-sdr") {
+		return false
+	}
+
+	// Allow all lrl-dtf-sdr prefixed state machines without suffix filtering.
+	if strings.HasPrefix(n, "lrl-dtf-sdr") {
+		return true
+	}
+
+	suffixes := []string{
+		"BusRulesProcessor",
+		"ATOM5RulesProcessor",
+		"VeevaRulesProcessor",
+		"IWRSRulesProcessor",
+		"IWRSDataProcessor",
+		"VeevaDataProcessor",
+		"Atom5DataProcessor",
+		"Infohub",
+	}
+
+	for _, suf := range suffixes {
+		if strings.HasSuffix(n, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) listExecutionsWithRetry(ctx context.Context, input *sfn.ListExecutionsInput) (*sfn.ListExecutionsOutput, error) {
+	var lastErr error
+	backoff := 400 * time.Millisecond
+
+	for attempt := 0; attempt < 8; attempt++ {
+		out, err := c.Sfn.ListExecutions(ctx, input)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		if !isThrottlingErr(err) {
+			return nil, err
+		}
+
+		sleep := withJitter(backoff)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(sleep):
+		}
+
+		backoff *= 2
+		if backoff > 6*time.Second {
+			backoff = 6 * time.Second
+		}
+	}
+
+	return nil, lastErr
+}
+
+func isThrottlingErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Throttling") ||
+		strings.Contains(msg, "Rate exceeded") ||
+		strings.Contains(msg, "retry quota exceeded") ||
+		strings.Contains(msg, "failed to get rate limit token")
+}
+
+func withJitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	// Simple deterministic jitter based on current time; avoids extra rng imports.
+	nanos := time.Now().UnixNano()
+	jitter := time.Duration(nanos % int64(d/2+1)) // up to ~50% jitter
+	return d + jitter
+}
+
+func errorTypeOrDefault(errorType string) string {
+	if strings.TrimSpace(errorType) == "" {
+		return "Execution Failed"
+	}
+	return errorType
+}

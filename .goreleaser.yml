@@ -1,0 +1,38 @@
+version: 2
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: work-dashboard
+    main: ./main.go
+    binary: work-dashboard
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: work-dashboard
+    builds:
+      - work-dashboard
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

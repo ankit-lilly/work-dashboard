@@ -1,0 +1,26 @@
+{{define "content"}}
+<section class="space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+            <h2 class="text-2xl font-bold tracking-tight">JSON Preview</h2>
+            <div class="text-xs text-base-content/60 break-all">
+                {{.Bucket}}/{{.Key}}
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <a class="btn btn-outline btn-sm"
+               href="/api/s3-download?env={{.Env}}&bucket={{.Bucket}}&key={{.Key}}">
+                Download
+            </a>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm border border-base-200 overflow-hidden">
+        {{if .Error}}
+        <div class="p-4 text-sm text-error">{{.Error}}</div>
+        {{else}}
+        <pre class="max-h-[70vh] overflow-auto bg-base-200 p-4 text-xs font-mono whitespace-pre-wrap">{{.PreviewHTML}}</pre>
+        {{end}}
+    </div>
+</section>
+{{end}}
