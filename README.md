@@ -13,7 +13,7 @@ It uses Go on the backend and Datastar for updating the UI via SSE.
 
 You need aws sso profiles for it work. You can take a look at .env.example to see what environment variables are expected.
 
-
+```shell
 Browser
   |  GET /
   v
@@ -30,5 +30,6 @@ Go server (handlers render HTML fragments)
   |  PatchElements -> target IDs
   v
 DOM updated in-place (no page reload)
+```
 
 
