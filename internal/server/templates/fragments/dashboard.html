@@ -76,14 +76,15 @@
             </div>
         </div>
         <div class="flex items-center gap-2 text-xs">
+            {{template "states-viewer-link" (dict "Env" .Env "ExecutionArn" .ExecutionArn)}}
             <a class="link link-primary" href="/api/s3-download?env={{.Env}}&bucket={{.Bucket}}&key={{.Key}}">
                 Download
             </a>
         </div>
     </summary>
-    <div class="collapse-content">
-        <div class="flex flex-wrap items-center gap-3">
-            <form data-on:submit="@get('/api/s3-preview', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})">
+        <div class="collapse-content">
+            <div class="flex flex-wrap items-center gap-3">
+                <form data-on:submit="@get('/api/s3-preview', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})">
                 <input type="hidden" name="env" value="{{.Env}}" />
                 <input type="hidden" name="bucket" value="{{.Bucket}}" />
                 <input type="hidden" name="key" value="{{.Key}}" />
@@ -94,8 +95,34 @@
             <a class="link link-primary text-xs" href="/api/s3-download?env={{.Env}}&bucket={{.Bucket}}&key={{.Key}}">
                 Download File
             </a>
+            {{if .OutputPrefix}}
+            <form class="flex flex-wrap items-center gap-2"
+                  data-on:submit="@get('/api/s3-prefix-list', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
+                  data-indicator:s3_prefix_loading>
+                <input type="hidden" name="env" value="{{.Env}}" />
+                <input type="hidden" name="bucket" value="{{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.Bucket}}{{end}}" />
+                <input type="hidden" name="prefix" value="{{.OutputPrefix}}" />
+                <input type="hidden" name="target_id" value="record-output-{{idSafe .ExecutionArn}}-{{.Index}}" />
+                <button type="submit" class="btn btn-outline btn-xs">
+                    List Output Files
+                </button>
+                {{if .OutputKey}}
+                <a class="btn btn-outline btn-xs"
+                   href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.Bucket}}{{end}}&key={{.OutputKey}}">
+                    Download Manifest
+                </a>
+                {{end}}
+                <span data-show="$s3_prefix_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    Loading...
+                </span>
+            </form>
+            {{end}}
         </div>
         <div id="record-json-{{idSafe .ExecutionArn}}-{{.Index}}" class="mt-3 max-h-[320px] overflow-auto rounded-box border border-base-200 bg-base-200 p-3 text-xs font-mono"></div>
+        {{if .OutputPrefix}}
+        <div id="record-output-{{idSafe .ExecutionArn}}-{{.Index}}" class="mt-3"></div>
+        {{end}}
     </div>
 </details>
 {{end}}
@@ -148,12 +175,24 @@
 
 {{define "state-machine-executions"}}
 <div class="divide-y divide-base-200">
+    <div id="state-machine-executions-rows" class="divide-y divide-base-200">
+        {{template "state-machine-executions-rows" .}}
+    </div>
+    <div id="state-machine-executions-footer">
+        {{template "state-machine-executions-footer" .}}
+    </div>
+</div>
+{{end}}
+
+{{define "state-machine-executions-rows"}}
     {{if .Executions}}
         {{range .Executions}}
         <details class="collapse collapse-arrow border border-base-200 bg-base-100/90">
             <summary class="collapse-title text-xs font-medium">
                 <span class="font-mono break-all">{{.Name}}</span>
                 <span class="badge badge-ghost badge-xs ml-2">{{.Status}}</span>
+                {{if .StartTime}}<span class="ml-2 text-base-content/60">{{.StartTime}}</span>{{end}}
+                {{if .StopTime}}<span class="ml-2 text-base-content/40">→ {{.StopTime}}</span>{{end}}
             </summary>
             <div class="collapse-content space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/60">
@@ -172,7 +211,7 @@
                     <summary class="collapse-title text-xs font-medium">Input / Output Files</summary>
                     {{if .InputBucket}}
                     <div class="collapse-content space-y-2 text-xs text-base-content/60">
-                        <div class="break-all">
+                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
                             Input: {{.InputBucket}}/{{.InputKey}}
                             {{if .InputSize}}<span class="ml-2">({{.InputSize}})</span>{{end}}
                         </div>
@@ -206,7 +245,7 @@
 
                     {{if .OutputPrefix}}
                     <div class="collapse-content space-y-2 text-xs text-base-content/60">
-                        <div class="break-all">
+                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
                             Output Prefix: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputPrefix}}
                         </div>
                         {{if .OutputManifestKey}}
@@ -249,8 +288,35 @@
     {{else}}
     <div class="p-4 text-sm text-base-content/60">No executions found.</div>
     {{end}}
-</div>
-{{end}}{{define "s3-search-results"}}
+{{end}}
+
+{{define "state-machine-executions-footer"}}
+    {{if and .Env .Arn}}
+        {{if .HasMore}}
+        <div class="p-3">
+            <button type="button" class="btn btn-outline btn-xs"
+                data-indicator:sm_exec_loading
+                data-class="{'btn-disabled pointer-events-none opacity-60': $sm_exec_loading}"
+                data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}&append=1&offset={{.Count}}', {openWhenHidden: true, requestCancellation: 'disabled'})">
+                Load more
+            </button>
+            <span class="ml-2 inline-flex items-center gap-1 text-[11px] text-base-content/60">
+                <span data-show="$sm_exec_loading" class="inline-flex items-center gap-1" style="display:none">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    Loading...
+                </span>
+                <span data-show="!$sm_exec_loading">Showing {{.Count}}</span>
+            </span>
+        </div>
+        {{else}}
+        <div class="p-3 text-[11px] text-base-content/50">
+            Showing {{.Count}}
+        </div>
+        {{end}}
+    {{end}}
+{{end}}
+
+{{define "s3-search-results"}}
 <div id="{{.Target}}" class="card bg-base-100 shadow-sm border border-base-200 overflow-hidden">
     {{if .Error}}
     <div class="p-3 text-xs text-error">Search error: {{.Error}}</div>

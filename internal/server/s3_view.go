@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -46,7 +46,7 @@ func (s *Server) handleS3ViewJSON(w http.ResponseWriter, r *http.Request) {
 		Key:    &key,
 	})
 	if err != nil {
-		log.Printf("s3 view head failed: %v", err)
+		slog.Warn("s3 view head failed", "err", err)
 	}
 
 	if head != nil && head.ContentLength != nil && *head.ContentLength > 2*1024*1024 {
@@ -71,7 +71,7 @@ func (s *Server) handleS3ViewJSON(w http.ResponseWriter, r *http.Request) {
 
 	previewHTML, err := buildPrettyPreview(obj.Body, index)
 	if err != nil {
-		log.Printf("s3 view build failed: %v", err)
+		slog.Warn("s3 view build failed", "err", err)
 	}
 
 	s.render(w, "json_view", map[string]any{
@@ -92,7 +92,7 @@ func (s *Server) handleS3PreviewModal(w http.ResponseWriter, r *http.Request) {
 	indexStr := strings.TrimSpace(q.Get("index"))
 	targetID := strings.TrimSpace(q.Get("target_id"))
 	if env == "" || bucket == "" || key == "" || targetID == "" {
-		log.Printf("s3 preview modal: missing env/bucket/key/target_id")
+		slog.Warn("s3 preview modal missing params", "env", env, "bucket", bucket, "key", key, "target_id", targetID)
 		return
 	}
 
@@ -105,7 +105,7 @@ func (s *Server) handleS3PreviewModal(w http.ResponseWriter, r *http.Request) {
 
 	client := s.awsManager.Clients[env]
 	if client == nil {
-		log.Printf("s3 preview modal: unknown env %s", env)
+		slog.Warn("s3 preview modal unknown env", "env", env)
 		return
 	}
 
@@ -117,7 +117,7 @@ func (s *Server) handleS3PreviewModal(w http.ResponseWriter, r *http.Request) {
 		Key:    &key,
 	})
 	if err != nil {
-		log.Printf("s3 preview modal head failed: %v", err)
+		slog.Warn("s3 preview modal head failed", "err", err)
 	}
 	if head != nil && head.ContentLength != nil && *head.ContentLength > 2*1024*1024 {
 		var buf bytes.Buffer
@@ -144,14 +144,14 @@ func (s *Server) handleS3PreviewModal(w http.ResponseWriter, r *http.Request) {
 		Key:    &key,
 	})
 	if err != nil {
-		log.Printf("s3 preview modal get failed: %v", err)
+		slog.Warn("s3 preview modal get failed", "err", err)
 		return
 	}
 	defer obj.Body.Close()
 
 	previewHTML, err := buildPrettyPreview(obj.Body, index)
 	if err != nil {
-		log.Printf("s3 preview modal build failed: %v", err)
+		slog.Warn("s3 preview modal build failed", "err", err)
 	}
 
 	var buf bytes.Buffer

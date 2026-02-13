@@ -3,7 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -151,6 +151,7 @@ func (s *Server) fetchActiveExecutions() ([]aws.Execution, error) {
 					}
 				}
 			}
+			s.notifyActiveInterval(c.EnvName, interval)
 
 			now := time.Now()
 			s.activeCacheMu.Lock()
@@ -180,7 +181,7 @@ func (s *Server) fetchActiveExecutions() ([]aws.Execution, error) {
 				mu.Unlock()
 				return
 			}
-			log.Printf("ListActiveExecutions failed for %s: %v", c.EnvName, err)
+			slog.Warn("list active executions failed", "env", c.EnvName, "err", err)
 			// fallback to last successful snapshot for this env
 			s.activeCacheMu.Lock()
 			cached := markStaleExecutions(s.activeCache[c.EnvName])
@@ -234,7 +235,7 @@ func (s *Server) fetchRecentFailures() ([]aws.Execution, error) {
 				mu.Unlock()
 				return
 			}
-			log.Printf("ListRecentFailures failed for %s: %v", c.EnvName, err)
+			slog.Warn("list recent failures failed", "env", c.EnvName, "err", err)
 		}(client)
 	}
 	wg.Wait()
@@ -263,7 +264,7 @@ func (s *Server) fetchStateMachines() ([]StateMachineItem, error) {
 			// Use a shorter cache inside the client if possible, or just fetch
 			list, err := c.ListFilteredStateMachines(ctx, 10*time.Minute)
 			if err != nil {
-				log.Printf("ListFilteredStateMachines failed for %s: %v", c.EnvName, err)
+				slog.Warn("list filtered state machines failed", "env", c.EnvName, "err", err)
 				return
 			}
 			localItems := make([]StateMachineItem, 0, len(list))

@@ -1,6 +1,7 @@
 package broadcaster
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -11,17 +12,20 @@ type Broadcaster[T any] struct {
 	current   T
 	currentMu sync.RWMutex
 	hasValue  bool
+	name      string
 }
 
-func NewBroadcaster[T any](fetchFunc func() (T, error), interval time.Duration) *Broadcaster[T] {
+func NewBroadcaster[T any](fetchFunc func() (T, error), interval time.Duration, name string) *Broadcaster[T] {
 	b := &Broadcaster[T]{
 		clients: make(map[chan T]struct{}),
+		name:    name,
 	}
 	go b.runFetcher(fetchFunc, interval)
 	return b
 }
 
 func (b *Broadcaster[T]) runFetcher(fetchFunc func() (T, error), interval time.Duration) {
+	slog.Info("broadcaster started", "name", b.name, "interval", interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

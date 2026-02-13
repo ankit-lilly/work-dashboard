@@ -2,7 +2,7 @@ package server
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -53,7 +53,7 @@ func (s *Server) notifyNewActiveExecutions(execs []aws.Execution) {
 	title, body := buildActiveNotification(newlySeen)
 	if err := beeep.Notify(title, body, ""); err != nil {
 		if fallbackErr := notifyMacHost(title, body); fallbackErr != nil {
-			log.Printf("desktop notification failed: %v; mac fallback failed: %v", err, fallbackErr)
+			slog.Warn("desktop notification failed", "err", err, "fallback_err", fallbackErr)
 		}
 	}
 }
@@ -94,7 +94,7 @@ func (s *Server) notifyNewFailures(execs []aws.Execution) {
 	title, body := buildFailureNotification(newlySeen)
 	if err := beeep.Notify(title, body, ""); err != nil {
 		if fallbackErr := notifyMacHost(title, body); fallbackErr != nil {
-			log.Printf("desktop notification failed: %v; mac fallback failed: %v", err, fallbackErr)
+			slog.Warn("desktop notification failed", "err", err, "fallback_err", fallbackErr)
 		}
 	}
 }

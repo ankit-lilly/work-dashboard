@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"path"
 	"sort"
@@ -52,6 +52,15 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 	sse := datastar.NewSSE(w, r)
 	env := strings.TrimSpace(r.URL.Query().Get("env"))
 	arn := strings.TrimSpace(r.URL.Query().Get("arn"))
+	count := parseIntOrDefault(r.URL.Query().Get("count"), 10)
+	appendMode := strings.TrimSpace(r.URL.Query().Get("append")) == "1"
+	offset := parseIntOrDefault(r.URL.Query().Get("offset"), 0)
+	if count < 1 {
+		count = 10
+	}
+	if count > 100 {
+		count = 100
+	}
 	if env == "" || arn == "" {
 		http.Error(w, "missing env or arn", http.StatusBadRequest)
 		return
@@ -63,8 +72,8 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Optimistic loading state
-	{
+	// Optimistic loading state (skip for append mode to preserve existing rows)
+	if !appendMode {
 		var buf bytes.Buffer
 		tmpl := s.templateSet("index")
 		if tmpl == nil {
@@ -83,16 +92,23 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	execs, err := client.ListRecentExecutionsByStatus(ctx, &arn, types.ExecutionStatusRunning, time.Time{}, 1)
-	if err != nil {
-		log.Printf("ListRecentExecutions failed for %s (%s): %v", env, arn, err)
+	maxPages := 1
+	if count > 10 {
+		maxPages = 2
 	}
-	more, _ := client.ListRecentExecutionsByStatus(ctx, &arn, types.ExecutionStatusFailed, time.Time{}, 1)
+	if count > 50 {
+		maxPages = 3
+	}
+	execs, err := client.ListRecentExecutionsByStatus(ctx, &arn, types.ExecutionStatusRunning, time.Time{}, maxPages)
+	if err != nil {
+		slog.Warn("list recent executions failed", "env", env, "arn", arn, "err", err)
+	}
+	more, _ := client.ListRecentExecutionsByStatus(ctx, &arn, types.ExecutionStatusFailed, time.Time{}, maxPages)
 	execs = append(execs, more...)
-	more, _ = client.ListRecentExecutionsByStatus(ctx, &arn, types.ExecutionStatusSucceeded, time.Time{}, 1)
+	more, _ = client.ListRecentExecutionsByStatus(ctx, &arn, types.ExecutionStatusSucceeded, time.Time{}, maxPages)
 	execs = append(execs, more...)
 
-	// Keep only last 10 by start time.
+	// Keep only last count by start time.
 	sort.Slice(execs, func(i, j int) bool {
 		if execs[i].StartDate == nil {
 			return false
@@ -102,8 +118,8 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		}
 		return execs[i].StartDate.After(*execs[j].StartDate)
 	})
-	if len(execs) > 10 {
-		execs = execs[:10]
+	if len(execs) > count {
+		execs = execs[:count]
 	}
 
 	var items []ExecutionItem
@@ -174,10 +190,57 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 	if tmpl == nil {
 		return
 	}
+	total := len(items)
+	hasMore := total >= count && count < 100
+	nextCount := count + 10
+	if nextCount > 100 {
+		nextCount = 100
+	}
+
+	if appendMode {
+		if offset < 0 {
+			offset = 0
+		}
+		if offset > len(items) {
+			offset = len(items)
+		}
+		newItems := items[offset:]
+		if len(newItems) > 0 {
+			buf.Reset()
+			_ = tmpl.ExecuteTemplate(&buf, "state-machine-executions-rows", map[string]any{
+				"Executions": newItems,
+			})
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#state-machine-executions-rows"),
+				datastar.WithMode(datastar.ElementPatchModeAppend),
+			)
+		}
+		buf.Reset()
+		_ = tmpl.ExecuteTemplate(&buf, "state-machine-executions-footer", map[string]any{
+			"Env":       env,
+			"Arn":       arn,
+			"Count":     count,
+			"CountNext": nextCount,
+			"Total":     total,
+			"HasMore":   hasMore,
+		})
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#state-machine-executions-footer"),
+			datastar.WithMode(datastar.ElementPatchModeInner),
+		)
+		return
+	}
+
 	_ = tmpl.ExecuteTemplate(&buf, "state-machine-executions", map[string]any{
 		"Env":        env,
 		"Arn":        arn,
 		"Executions": items,
+		"Count":      count,
+		"CountNext":  nextCount,
+		"Total":      total,
+		"HasMore":    hasMore,
 	})
 
 	sse.PatchElements(
@@ -217,6 +280,17 @@ func humanBytes(n int64) string {
 	}
 	suffixes := []string{"KB", "MB", "GB", "TB"}
 	return strconv.FormatFloat(value, 'f', 1, 64) + " " + suffixes[exp-1]
+}
+
+func parseIntOrDefault(val string, def int) int {
+	if val == "" {
+		return def
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
 }
 
 func extractResultWriterDetails(output *string) (string, string) {
@@ -286,13 +360,13 @@ func (s *Server) handleS3PrefixList(w http.ResponseWriter, r *http.Request) {
 	prefix := strings.TrimSpace(q.Get("prefix"))
 	targetID := strings.TrimSpace(q.Get("target_id"))
 	if env == "" || bucket == "" || prefix == "" || targetID == "" {
-		log.Printf("s3 prefix list: missing env/bucket/prefix/target_id")
+		slog.Warn("s3 prefix list missing params", "env", env, "bucket", bucket, "prefix", prefix, "target_id", targetID)
 		return
 	}
 
 	client := s.awsManager.Clients[env]
 	if client == nil {
-		log.Printf("s3 prefix list: unknown env %s", env)
+		slog.Warn("s3 prefix list unknown env", "env", env)
 		return
 	}
 
@@ -305,7 +379,7 @@ func (s *Server) handleS3PrefixList(w http.ResponseWriter, r *http.Request) {
 		MaxKeys: aws.Int32(50),
 	})
 	if err != nil {
-		log.Printf("s3 list failed: %v", err)
+		slog.Warn("s3 list failed", "err", err)
 	}
 
 	var items []S3ObjectItem
@@ -379,7 +453,7 @@ func (s *Server) handleS3Search(w http.ResponseWriter, r *http.Request) {
 
 	matches, err := client.FindStringInS3JSON(ctx, bucket, key, query, 50)
 	if err != nil {
-		log.Printf("s3 search failed: %v", err)
+		slog.Warn("s3 search failed", "err", err)
 	}
 
 	var buf bytes.Buffer
@@ -412,7 +486,7 @@ func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
 	indexStr := strings.TrimSpace(q.Get("index"))
 	targetID := strings.TrimSpace(q.Get("target_id"))
 	if env == "" || bucket == "" || key == "" || targetID == "" {
-		log.Printf("s3 preview: missing env/bucket/key/target_id")
+		slog.Warn("s3 preview missing params", "env", env, "bucket", bucket, "key", key, "target_id", targetID)
 		return
 	}
 
@@ -425,7 +499,7 @@ func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
 
 	client := s.awsManager.Clients[env]
 	if client == nil {
-		log.Printf("s3 preview: unknown env %s", env)
+		slog.Warn("s3 preview unknown env", "env", env)
 		return
 	}
 
@@ -437,7 +511,7 @@ func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
 		Key:    &key,
 	})
 	if err != nil {
-		log.Printf("s3 preview head failed: %v", err)
+		slog.Warn("s3 preview head failed", "err", err)
 	}
 	if head != nil && head.ContentLength != nil && *head.ContentLength > 2*1024*1024 {
 		var buf bytes.Buffer
@@ -462,14 +536,14 @@ func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
 		Key:    &key,
 	})
 	if err != nil {
-		log.Printf("s3 preview get failed: %v", err)
+		slog.Warn("s3 preview get failed", "err", err)
 		return
 	}
 	defer obj.Body.Close()
 
 	previewHTML, err := buildPrettyPreview(obj.Body, index)
 	if err != nil {
-		log.Printf("s3 preview build failed: %v", err)
+		slog.Warn("s3 preview build failed", "err", err)
 	}
 
 	var buf bytes.Buffer

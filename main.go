@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +13,8 @@ import (
 	"github.com/EliLillyCo/work-dashboard/internal/aws"
 	"github.com/EliLillyCo/work-dashboard/internal/config"
 	"github.com/EliLillyCo/work-dashboard/internal/server"
+	"log/slog"
+	_ "time/tzdata"
 )
 
 //go:embed static/* static/**/*
@@ -25,14 +26,35 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		slog.Error("failed to load config", "err", err)
+		os.Exit(1)
+	}
+
+	if tz := os.Getenv("JOB_TZ"); tz != "" {
+		if loc, err := time.LoadLocation(tz); err != nil {
+			slog.Warn("invalid JOB_TZ, falling back to default", "tz", tz, "err", err)
+		} else {
+			time.Local = loc
+		}
+	} else if tz := os.Getenv("TZ"); tz != "" {
+		if loc, err := time.LoadLocation(tz); err != nil {
+			slog.Warn("invalid TZ, falling back to default", "tz", tz, "err", err)
+		} else {
+			time.Local = loc
+		}
 	}
 
 	awsManager, err := aws.NewClientManager(ctx, cfg)
 	if err != nil {
-		log.Fatalf("Failed to initialize AWS manager: %v", err)
+		slog.Error("failed to initialize AWS manager", "err", err)
+		os.Exit(1)
 	}
 
 	srv := server.NewServer(awsManager, staticFS, cfg)
@@ -48,21 +70,23 @@ func main() {
 	}
 
 	go func() {
-		fmt.Printf("Job Viewer starting on http://localhost:%s\n", port)
+		slog.Info("job viewer starting", "addr", fmt.Sprintf("http://localhost:%s", port))
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Listen and serve error: %v", err)
+			slog.Error("listen and serve error", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	<-ctx.Done()
-	fmt.Println("\nShutting down gracefully...")
+	slog.Info("shutting down gracefully")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		slog.Error("server forced to shutdown", "err", err)
+		os.Exit(1)
 	}
 
-	fmt.Println("Server exited.")
+	slog.Info("server exited")
 }

@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -33,10 +34,15 @@ type ClientManager struct {
 
 /*
 
-@doc NewClientManager initializes AWS clients for each environment defined in the configuration.
+@docs
 
-This works by iterating over the environment mappings specified in the configuration file ( env:profile:region format)
-and creating a new AWS configuration. This works by looking for aws sso profiles in the user's AWS config file (typically located at ~/.aws/config) and loading the appropriate credentials and region settings for each environment.( whatever is specified in the config file for that profile)
+NewClientManager initializes AWS clients for each environment defined in the configuration.
+
+This works by iterating over the environment mappings specified in the configuration file
+( env:profile:region format) and creating a new AWS configuration. This works by looking for aws
+sso profiles in the user's AWS config file (typically located at ~/.aws/config) and loading the
+appropriate credentials and region settings for each environment.( whatever is specified in the
+config file for that profile)
 
 */
 
@@ -46,7 +52,7 @@ func NewClientManager(ctx context.Context, cfg *config.Config) (*ClientManager, 
 	}
 
 	for _, mapping := range cfg.Envs {
-		fmt.Printf("Initializing AWS client for environment: %s (profile: %s, region: %s)\n", mapping.Name, mapping.Profile, mapping.Region)
+		slog.Info("initializing aws client", "env", mapping.Name, "profile", mapping.Profile, "region", mapping.Region)
 
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
 			awsconfig.WithSharedConfigProfile(mapping.Profile),

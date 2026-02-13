@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +32,9 @@ type RecordSearchResult struct {
 	Record        string
 	ChildArn      string
 	ChildName     string
+	OutputBucket  string
+	OutputPrefix  string
+	OutputKey     string
 }
 
 type searchUpdate struct {
@@ -57,9 +62,30 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.TrimSpace(r.FormValue("email_address"))
 	env := strings.TrimSpace(r.FormValue("env"))
-	hours := parseIntOrDefault(r.FormValue("hours"), 24)
+	stateMachine := strings.TrimSpace(r.FormValue("state_machine"))
+	startDate := strings.TrimSpace(r.FormValue("start_date"))
+	endDate := strings.TrimSpace(r.FormValue("end_date"))
 
-	key := buildSearchKey(email, env, hours)
+	startAt, endAt, err := parseDateRange(startDate, endDate)
+	if err != nil {
+		var buf bytes.Buffer
+		tmpl := s.templateSet("index")
+		if tmpl != nil {
+			_ = tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
+				"Email":     email,
+				"Env":       env,
+				"SearchKey": "",
+				"Results":   nil,
+				"Error":     err.Error(),
+				"Searching": false,
+				"Stopped":   false,
+			})
+			sse.PatchElements(buf.String())
+		}
+		return
+	}
+
+	key := buildSearchKey(email, env, stateMachine, startDate, endDate)
 	state := s.getOrCreateSearchState(key)
 
 	// Initial render (shell + existing rows)
@@ -78,7 +104,6 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 		_ = tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
 			"Email":     email,
 			"Env":       env,
-			"Hours":     hours,
 			"SearchKey": key,
 			"Results":   existing,
 			"Error":     nil,
@@ -102,7 +127,7 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
-			s.searchEmailStreaming(ctx, email, env, hours, state)
+			s.searchEmailStreaming(ctx, email, env, stateMachine, startAt, endAt, state)
 		}()
 	}
 
@@ -208,7 +233,7 @@ func (s *Server) handleRecordSearchCancel(w http.ResponseWriter, r *http.Request
 	)
 }
 
-func (s *Server) searchEmailStreaming(ctx context.Context, email, env string, hours int, state *searchState) {
+func (s *Server) searchEmailStreaming(ctx context.Context, email, env, stateMachine string, startAt, endAt *time.Time, state *searchState) {
 	defer func() {
 		state.mu.Lock()
 		state.running = false
@@ -217,7 +242,14 @@ func (s *Server) searchEmailStreaming(ctx context.Context, email, env string, ho
 		state.broadcast(searchUpdate{done: true})
 	}()
 
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	cutoff := time.Time{}
+	if startAt != nil {
+		cutoff = *startAt
+	}
+	maxResults := 20
+	if startAt != nil || endAt != nil {
+		maxResults = 100
+	}
 
 	for _, client := range s.awsManager.Clients {
 		if !envMatchesSelection(client.EnvName, env) {
@@ -227,7 +259,7 @@ func (s *Server) searchEmailStreaming(ctx context.Context, email, env string, ho
 		stateMachines, err := client.ListFilteredStateMachines(ctx, 10*time.Minute)
 		if err != nil {
 			if !isContextCanceled(err) {
-				log.Printf("ListFilteredStateMachines failed for %s: %v", client.EnvName, err)
+				slog.Warn("list filtered state machines failed", "env", client.EnvName, "err", err)
 			}
 			continue
 		}
@@ -246,16 +278,28 @@ func (s *Server) searchEmailStreaming(ctx context.Context, email, env string, ho
 			}
 
 			for _, sm := range stateMachines[i:end] {
-				execs, err := listRecentExecutionsForSearch(ctx, client, sm.StateMachineArn, cutoff)
+				if !matchesStateMachineFilter(sm, stateMachine) {
+					continue
+				}
+				execs, err := listRecentExecutionsForSearch(ctx, client, sm.StateMachineArn, cutoff, maxResults)
 				if err != nil {
 					if !isContextCanceled(err) {
-						log.Printf("ListRecentExecutions failed for %s (%s): %v", client.EnvName, *sm.StateMachineArn, err)
+						slog.Warn("list recent executions failed", "env", client.EnvName, "state_machine_arn", derefString(sm.StateMachineArn), "err", err)
 					}
 					continue
 				}
 
 				var newResults []RecordSearchResult
 				for _, e := range execs {
+					if e.StartDate == nil {
+						continue
+					}
+					if startAt != nil && e.StartDate.Before(*startAt) {
+						continue
+					}
+					if endAt != nil && e.StartDate.After(*endAt) {
+						continue
+					}
 					desc, err := client.Sfn.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
 						ExecutionArn: e.ExecutionArn,
 					})
@@ -266,6 +310,11 @@ func (s *Server) searchEmailStreaming(ctx context.Context, email, env string, ho
 					bucket, key := extractBucketKey(desc.Input)
 					if bucket == "" || key == "" {
 						continue
+					}
+					outBucket, outKey := extractResultWriterDetails(desc.Output)
+					outPrefix := ""
+					if outBucket != "" && outKey != "" {
+						outPrefix = strings.TrimSuffix(outKey, path.Base(outKey))
 					}
 
 					match, err := client.FindEmailInS3JSON(ctx, bucket, key, email)
@@ -283,6 +332,9 @@ func (s *Server) searchEmailStreaming(ctx context.Context, email, env string, ho
 						Key:           key,
 						Index:         match.Index,
 						Record:        match.Record,
+						OutputBucket:  outBucket,
+						OutputPrefix:  outPrefix,
+						OutputKey:     outKey,
 					}
 
 					if state.addResult(res) {
@@ -368,14 +420,17 @@ func (s *searchState) isCanceled() bool {
 	return s.canceled
 }
 
-func listRecentExecutionsForSearch(ctx context.Context, c *aws.Client, stateMachineArn *string, cutoff time.Time) ([]types.ExecutionListItem, error) {
+func listRecentExecutionsForSearch(ctx context.Context, c *aws.Client, stateMachineArn *string, cutoff time.Time, maxResults int) ([]types.ExecutionListItem, error) {
 	statuses := []types.ExecutionStatus{
 		types.ExecutionStatusRunning,
 		types.ExecutionStatusFailed,
 		types.ExecutionStatusSucceeded,
 	}
 
-	out := make([]types.ExecutionListItem, 0, 3)
+	if maxResults <= 0 {
+		maxResults = 30
+	}
+	out := make([]types.ExecutionListItem, 0, maxResults)
 	for _, status := range statuses {
 		execs, err := c.ListRecentExecutionsByStatus(ctx, stateMachineArn, status, cutoff, 2)
 		if err != nil {
@@ -383,13 +438,23 @@ func listRecentExecutionsForSearch(ctx context.Context, c *aws.Client, stateMach
 		}
 		for _, e := range execs {
 			out = append(out, e)
-			if len(out) >= 3 {
+			if len(out) >= maxResults {
 				return out, nil
 			}
 		}
 	}
 
 	return out, nil
+}
+
+func matchesStateMachineFilter(sm types.StateMachineListItem, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+	name := strings.ToLower(derefString(sm.Name))
+	arn := strings.ToLower(derefString(sm.StateMachineArn))
+	return strings.Contains(name, filter) || strings.Contains(arn, filter)
 }
 
 func extractBucketKey(input *string) (string, string) {
@@ -428,15 +493,33 @@ func getBucketKeyPrefix(m map[string]any) (string, string, string) {
 	return bucket, key, prefix
 }
 
-func parseIntOrDefault(val string, def int) int {
-	if val == "" {
-		return def
+func parseDateRange(startDate, endDate string) (*time.Time, *time.Time, error) {
+	const layout = "2006-01-02"
+	var startAt *time.Time
+	var endAt *time.Time
+
+	if startDate != "" {
+		t, err := time.ParseInLocation(layout, startDate, time.Local)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid start date")
+		}
+		startAt = &t
 	}
-	n, err := strconv.Atoi(val)
-	if err != nil || n <= 0 {
-		return def
+
+	if endDate != "" {
+		t, err := time.ParseInLocation(layout, endDate, time.Local)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid end date")
+		}
+		t = t.Add(24*time.Hour - time.Nanosecond)
+		endAt = &t
 	}
-	return n
+
+	if startAt != nil && endAt != nil && endAt.Before(*startAt) {
+		return nil, nil, fmt.Errorf("end date must be on or after start date")
+	}
+
+	return startAt, endAt, nil
 }
 
 func derefString(s *string) string {
@@ -450,22 +533,29 @@ func formatTime(t *time.Time) string {
 	if t == nil {
 		return ""
 	}
-	return t.Format("2006-01-02 15:04:05")
+	return t.In(time.Local).Format("2006-01-02 15:04:05 MST")
 }
 
 func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-func buildSearchKey(email, env string, hours int) string {
+func buildSearchKey(email, env, stateMachine, startDate, endDate string) string {
 	email = strings.ToLower(strings.TrimSpace(email))
 	env = strings.ToLower(strings.TrimSpace(env))
+	stateMachine = strings.ToLower(strings.TrimSpace(stateMachine))
+	startDate = strings.TrimSpace(startDate)
+	endDate = strings.TrimSpace(endDate)
 	var b strings.Builder
-	b.Grow(len(email) + len(env) + 12)
+	b.Grow(len(email) + len(env) + len(stateMachine) + len(startDate) + len(endDate) + 16)
 	b.WriteString(email)
 	b.WriteByte('|')
 	b.WriteString(env)
 	b.WriteByte('|')
-	b.WriteString(strconv.Itoa(hours))
+	b.WriteString(stateMachine)
+	b.WriteByte('|')
+	b.WriteString(startDate)
+	b.WriteByte('|')
+	b.WriteString(endDate)
 	return b.String()
 }

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/EliLillyCo/work-dashboard/internal/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sfn/types"
 )
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,12 +42,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prodClient, ok := s.awsManager.Clients["prod"]
-	if !ok || prodClient == nil {
-		s.render(w, "index", map[string]any{
-			"ActiveNav": "dashboard",
-		})
-		return
-	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -70,29 +63,23 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
+			if !ok || prodClient == nil {
+				return
+			}
 			data.activeJobs, data.activeJobsErr = prodClient.ListActiveExecutions(ctx)
 		}()
 
 		go func() {
 			defer wg.Done()
+			if !ok || prodClient == nil {
+				return
+			}
 			data.recentFailures, data.recentFailuresErr = prodClient.ListRecentFailures(ctx)
 		}()
 
 		go func() {
 			defer wg.Done()
-			var list []types.StateMachineListItem
-			list, data.stateMachinesErr = prodClient.ListFilteredStateMachines(ctx, 10*time.Minute)
-			if data.stateMachinesErr != nil {
-				return
-			}
-			data.stateMachines = make([]StateMachineItem, 0, len(list))
-			for _, sm := range list {
-				data.stateMachines = append(data.stateMachines, StateMachineItem{
-					Env:  prodClient.EnvName,
-					Name: derefString(sm.Name),
-					Arn:  derefString(sm.StateMachineArn),
-				})
-			}
+			data.stateMachines, data.stateMachinesErr = s.fetchStateMachines()
 		}()
 
 		wg.Wait()

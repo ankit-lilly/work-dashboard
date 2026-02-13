@@ -2,7 +2,7 @@ package aws
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -50,7 +50,7 @@ func (c *Client) ListActiveExecutions(ctx context.Context) ([]Execution, error) 
 				MaxResults:      10,
 			})
 			if err != nil {
-				log.Printf("ListExecutions failed for %s (%s): %v", c.EnvName, *sm.StateMachineArn, err)
+				slog.Warn("list executions failed", "env", c.EnvName, "state_machine_arn", derefString(sm.StateMachineArn), "err", err)
 				return
 			}
 
@@ -110,7 +110,7 @@ func (c *Client) ListRecentFailures(ctx context.Context) ([]Execution, error) {
 				MaxResults:      10,
 			})
 			if err != nil {
-				log.Printf("ListExecutions failed for %s (%s): %v", c.EnvName, *sm.StateMachineArn, err)
+				slog.Warn("list executions failed", "env", c.EnvName, "state_machine_arn", derefString(sm.StateMachineArn), "err", err)
 				return
 			}
 
@@ -119,14 +119,13 @@ func (c *Client) ListRecentFailures(ctx context.Context) ([]Execution, error) {
 				if e.StopDate == nil || e.StopDate.Before(oneDayAgo) {
 					continue
 				}
-
 				var errorType string
 				var failureReason string
 				desc, err := c.Sfn.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
 					ExecutionArn: e.ExecutionArn,
 				})
 				if err != nil {
-					log.Printf("DescribeExecution failed for %s: %v", c.EnvName, err)
+					slog.Warn("describe execution failed", "env", c.EnvName, "execution_arn", derefString(e.ExecutionArn), "err", err)
 				} else {
 					if desc.Error != nil {
 						errorType = *desc.Error
@@ -143,7 +142,7 @@ func (c *Client) ListRecentFailures(ctx context.Context) ([]Execution, error) {
 					ExecutionArn:  *e.ExecutionArn,
 					Status:        string(e.Status),
 					StopTime:      *e.StopDate,
-					FailedAt:      e.StopDate.Format("15:04:05 (02 Jan)"),
+					FailedAt:      e.StopDate.In(time.Local).Format("15:04:05 MST (02 Jan)"),
 					ErrorType:     errorTypeOrDefault(errorType),
 					FailureReason: failureReason,
 				})
@@ -277,7 +276,7 @@ func (c *Client) listExecutionsWithRetry(ctx context.Context, input *sfn.ListExe
 	var lastErr error
 	backoff := 400 * time.Millisecond
 
-	for attempt := 0; attempt < 8; attempt++ {
+	for range [8]struct{}{} {
 		out, err := c.Sfn.ListExecutions(ctx, input)
 		if err == nil {
 			return out, nil
@@ -301,6 +300,13 @@ func (c *Client) listExecutionsWithRetry(ctx context.Context, input *sfn.ListExe
 	}
 
 	return nil, lastErr
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func isThrottlingErr(err error) bool {

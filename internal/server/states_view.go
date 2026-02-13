@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -41,13 +41,13 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 	arn := strings.TrimSpace(q.Get("arn"))
 	targetID := strings.TrimSpace(q.Get("target_id"))
 	if env == "" || arn == "" || targetID == "" {
-		log.Printf("execution states: missing env/arn/target_id")
+		slog.Warn("execution states missing params", "env", env, "arn", arn, "target_id", targetID)
 		return
 	}
 
 	client := s.awsManager.Clients[env]
 	if client == nil {
-		log.Printf("execution states: unknown env %s", env)
+		slog.Warn("execution states unknown env", "env", env)
 		return
 	}
 

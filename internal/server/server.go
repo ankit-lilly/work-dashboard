@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -47,6 +48,8 @@ type Server struct {
 	notifyFailuresReady bool
 	seenActive          map[string]time.Time
 	seenFailures        map[string]time.Time
+
+	activeIntervalLogged map[string]time.Duration
 }
 
 func (s *Server) templateSet(name string) *template.Template {
@@ -57,14 +60,15 @@ func (s *Server) templateSet(name string) *template.Template {
 
 func NewServer(awsManager *aws.ClientManager, staticFS fs.FS, cfg *config.Config) *Server {
 	s := &Server{
-		awsManager:    awsManager,
-		staticFS:      staticFS,
-		cfg:           cfg,
-		activeCache:   make(map[string][]aws.Execution),
-		activeCacheAt: make(map[string]time.Time),
-		searchStates:  make(map[string]*searchState),
-		seenActive:    make(map[string]time.Time),
-		seenFailures:  make(map[string]time.Time),
+		awsManager:           awsManager,
+		staticFS:             staticFS,
+		cfg:                  cfg,
+		activeCache:          make(map[string][]aws.Execution),
+		activeCacheAt:        make(map[string]time.Time),
+		searchStates:         make(map[string]*searchState),
+		seenActive:           make(map[string]time.Time),
+		seenFailures:         make(map[string]time.Time),
+		activeIntervalLogged: make(map[string]time.Duration),
 	}
 	s.parseTemplates()
 	s.initBroadcasters()
@@ -80,9 +84,10 @@ func (s *Server) initBroadcasters() {
 		failuresInterval = s.cfg.Polling.FailuresInterval
 		stateMachinesInterval = s.cfg.Polling.StateMachinesInterval
 	}
-	s.activeBroadcaster = broadcaster.NewBroadcaster(s.fetchActiveExecutions, activeInterval)
-	s.failuresBroadcaster = broadcaster.NewBroadcaster(s.fetchRecentFailures, failuresInterval)
-	s.stateMachinesBroadcaster = broadcaster.NewBroadcaster(s.fetchStateMachines, stateMachinesInterval)
+	slog.Info("polling intervals", "active", activeInterval, "failures", failuresInterval, "state_machines", stateMachinesInterval)
+	s.activeBroadcaster = broadcaster.NewBroadcaster(s.fetchActiveExecutions, activeInterval, "active-executions")
+	s.failuresBroadcaster = broadcaster.NewBroadcaster(s.fetchRecentFailures, failuresInterval, "recent-failures")
+	s.stateMachinesBroadcaster = broadcaster.NewBroadcaster(s.fetchStateMachines, stateMachinesInterval, "state-machines")
 }
 
 func (s *Server) parseTemplates() {
@@ -115,6 +120,12 @@ func (s *Server) parseTemplates() {
 				}
 			}
 			return b.String()
+		},
+		"add": func(a, b int) int {
+			return a + b
+		},
+		"formatTimeLocal": func(t time.Time) string {
+			return t.In(time.Local).Format("2006-01-02 15:04:05 MST")
 		},
 	}
 
@@ -151,4 +162,15 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) notifyActiveInterval(env string, interval time.Duration) {
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
+	last, ok := s.activeIntervalLogged[env]
+	if ok && last == interval {
+		return
+	}
+	s.activeIntervalLogged[env] = interval
+	slog.Info("active polling interval", "env", env, "interval", interval)
 }
