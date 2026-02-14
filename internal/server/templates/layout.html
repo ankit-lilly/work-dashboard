@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Work Dashboard</title>
+    <title>Radar</title>
     <link rel="stylesheet" href="/static/css/app.css">
     <script type="module" src="/static/js/datastar.js"></script>
 </head>
@@ -25,15 +25,47 @@
         <div class="container mx-auto px-4 py-6 max-w-7xl">
             <div class="flex items-center justify-between mb-8">
                 <div>
-                    <h1 class="text-2xl font-semibold">Work Dashboard</h1>
-                    <p class="text-sm text-base-content/60 mt-1">AWS Step Functions</p>
+                    <h1 class="text-2xl font-semibold">Radar</h1>
+                    <p id="tagline" class="text-sm text-base-content/60 mt-1 transition-opacity duration-500">Multi-environment monitoring for DSOA & CAMP</p>
                 </div>
             </div>
+            <script>
+                const taglines = [
+                    "What's coming before it hits",
+                    "Catch issues before Teams catches fire 🔥",
+                    "See failures before they see you",
+                    "Because 'urgent' messages can wait",
+                    "Your early warning system for AWS chaos",
+                    "Finding issues before standup",
+                    "Staying ahead of the alerts (and the questions)",
+                    "The calm before the storm...of Teams messages",
+                    "Proactive debugging, reactive coffee ☕",
+                    "So you can say 'I know' before they ask",
+                    "Less panic, more scanning 📡",
+                    "Spotting problems before they become tickets",
+                    "Your crystal ball for infrastructure",
+                    "Multi-environment monitoring for DSOA & CAMP"
+                ];
+
+                let currentIndex = 0;
+                const taglineEl = document.getElementById('tagline');
+
+                function rotateTagline() {
+                    taglineEl.style.opacity = '0';
+                    setTimeout(() => {
+                        currentIndex = (currentIndex + 1) % taglines.length;
+                        taglineEl.textContent = taglines[currentIndex];
+                        taglineEl.style.opacity = '1';
+                    }, 500);
+                }
+
+                setInterval(rotateTagline, 20000);
+            </script>
 
             {{block "content" .}}{{end}}
 
             <div class="text-center text-sm text-base-content/60 mt-12 pt-6 border-t border-base-300">
-                Work Dashboard
+                Radar
             </div>
         </div>
     </div>

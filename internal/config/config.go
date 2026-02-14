@@ -27,6 +27,8 @@ type PollingConfig struct {
 	ActiveInterval        time.Duration
 	FailuresInterval      time.Duration
 	StateMachinesInterval time.Duration
+	RDSSlowInterval       time.Duration
+	RDSFastInterval       time.Duration
 	ActiveIntervalByEnv   map[string]time.Duration
 }
 
@@ -36,6 +38,8 @@ type LimitsConfig struct {
 	MaxJSONLineSize     int
 	JSONPreviewMaxChars int
 	SearchStateTTL      time.Duration
+	RDSMetricHours      int
+	RDSMaxQueries       int
 }
 
 func LoadConfig() (*Config, error) {
@@ -83,6 +87,8 @@ func defaultPollingConfig() PollingConfig {
 		ActiveInterval:        5 * time.Second,
 		FailuresInterval:      120 * time.Second,
 		StateMachinesInterval: 5 * time.Minute,
+		RDSSlowInterval:       30 * time.Minute,
+		RDSFastInterval:       30 * time.Second,
 		ActiveIntervalByEnv: map[string]time.Duration{
 			"dev":  10 * time.Second,
 			"qa":   10 * time.Second,
@@ -98,6 +104,8 @@ func defaultLimitsConfig() LimitsConfig {
 		MaxJSONLineSize:     2 * 1024 * 1024, // 2MB
 		JSONPreviewMaxChars: 300,
 		SearchStateTTL:      10 * time.Minute,
+		RDSMetricHours:      2,
+		RDSMaxQueries:       10,
 	}
 }
 
@@ -105,6 +113,8 @@ func applyPollingEnv(cfg *Config) {
 	cfg.Polling.ActiveInterval = parseDurationEnv("JOB_ACTIVE_POLL", cfg.Polling.ActiveInterval)
 	cfg.Polling.FailuresInterval = parseDurationEnv("JOB_FAILURES_POLL", cfg.Polling.FailuresInterval)
 	cfg.Polling.StateMachinesInterval = parseDurationEnv("JOB_STATE_MACHINES_POLL", cfg.Polling.StateMachinesInterval)
+	cfg.Polling.RDSSlowInterval = parseDurationEnv("RDS_SLOW_POLL_INTERVAL", cfg.Polling.RDSSlowInterval)
+	cfg.Polling.RDSFastInterval = parseDurationEnv("RDS_FAST_POLL_INTERVAL", cfg.Polling.RDSFastInterval)
 
 	cacheEnv := strings.TrimSpace(os.Getenv("JOB_ACTIVE_POLL_BY_ENV"))
 	if cacheEnv == "" {
@@ -169,6 +179,20 @@ func applyLimitsEnv(cfg *Config) {
 		var chars int
 		if _, err := fmt.Sscanf(val, "%d", &chars); err == nil && chars > 0 {
 			cfg.Limits.JSONPreviewMaxChars = chars
+		}
+	}
+
+	if val := strings.TrimSpace(os.Getenv("RDS_METRIC_HOURS")); val != "" {
+		var hours int
+		if _, err := fmt.Sscanf(val, "%d", &hours); err == nil && hours > 0 {
+			cfg.Limits.RDSMetricHours = hours
+		}
+	}
+
+	if val := strings.TrimSpace(os.Getenv("RDS_MAX_QUERIES")); val != "" {
+		var queries int
+		if _, err := fmt.Sscanf(val, "%d", &queries); err == nil && queries > 0 {
+			cfg.Limits.RDSMaxQueries = queries
 		}
 	}
 }

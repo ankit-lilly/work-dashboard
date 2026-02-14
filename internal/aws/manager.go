@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/pi"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	"github.com/aws/aws-sdk-go-v2/service/sfn/types"
@@ -23,6 +25,8 @@ type Client struct {
 	Sfn     *sfn.Client
 	S3      *s3.Client
 	Logs    *cloudwatchlogs.Client
+	RDS     *rds.Client
+	PI      *pi.Client
 
 	StateMachinesMu sync.RWMutex
 	StateMachines   []types.StateMachineListItem
@@ -73,6 +77,8 @@ func NewClientManager(ctx context.Context, cfg *config.Config) (*ClientManager, 
 			Sfn:         sfn.NewFromConfig(awsCfg),
 			S3:          s3.NewFromConfig(awsCfg),
 			Logs:        cloudwatchlogs.NewFromConfig(awsCfg),
+			RDS:         rds.NewFromConfig(awsCfg),
+			PI:          pi.NewFromConfig(awsCfg),
 			execCache:   make(map[execCacheKey]execCacheEntry),
 			execLimiter: rate.NewLimiter(rate.Every(200*time.Millisecond), 5),
 		}

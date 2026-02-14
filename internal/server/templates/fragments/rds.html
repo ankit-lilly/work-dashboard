@@ -1,0 +1,97 @@
+{{define "rds-metrics"}}
+<div class="divide-y divide-base-200">
+    {{if .Metrics}}
+        {{range .Metrics}}
+        <details class="collapse collapse-arrow border-b border-base-200 bg-base-100"
+                 data-show="($rdsEnv == 'all' || $rdsEnv == '{{.Env}}'.split(':')[0]) && ($selectedRdsDb == '' || $selectedRdsDb == '{{.DBInstanceId}}')">
+            <summary class="collapse-title min-h-0 py-4 cursor-pointer">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="badge badge-ghost badge-sm">{{.Env}}</span>
+                        <span class="font-medium">{{.DBInstanceId}}</span>
+                        {{if not .PerformanceInsightsEnabled}}
+                        <span class="badge badge-warning badge-xs">PI Disabled</span>
+                        {{end}}
+                    </div>
+                    <div class="text-xs text-base-content/60">
+                        {{if .PerformanceInsightsEnabled}}
+                        CPU: <span class="font-mono {{cpuColorClass .CPUCurrent}}">{{printf "%.1f" .CPUCurrent}}%</span>
+                        <span class="text-base-content/40">(avg: {{printf "%.1f" .CPUAverage}}%, max: {{printf "%.1f" .CPUMax}}%)</span>
+                        {{end}}
+                    </div>
+                </div>
+            </summary>
+            <div class="collapse-content pb-4">
+                {{if not .PerformanceInsightsEnabled}}
+                <div class="alert alert-warning text-xs">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <span>Performance Insights is not enabled for this database instance. Enable it in the AWS Console to view metrics.</span>
+                </div>
+                {{else if .Error}}
+                <div class="alert alert-error text-xs">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>{{.Error}}</span>
+                </div>
+                {{else}}
+                <div class="space-y-3">
+                    <!-- Database Info -->
+                    <div class="flex flex-wrap items-center gap-4 text-xs text-base-content/60 bg-base-200/30 rounded-lg p-3">
+                        <div>Engine: <span class="font-mono">{{.Engine}}</span></div>
+                        <div>Status: <span class="font-mono">{{.Status}}</span></div>
+                        <div>Resource ID: <span class="font-mono text-[10px]">{{.DBResourceId}}</span></div>
+                    </div>
+
+                    <!-- Top Queries Section -->
+                    {{if eq (len .TopQueries) 0}}
+                    <div class="p-4 text-xs text-base-content/60 italic text-center">
+                        No query activity in the last {{$.MetricHours}} hours.
+                    </div>
+                    {{else}}
+                    <div>
+                        <h4 class="text-xs font-semibold mb-2 text-base-content/70">Top Queries (Last {{$.MetricHours}}h)</h4>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs">
+                                <thead>
+                                    <tr>
+                                        <th class="w-1/2">Query</th>
+                                        <th>DB Load (AAS)</th>
+                                        <th>Calls/sec</th>
+                                        <th>Avg Latency</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {{range .TopQueries}}
+                                    <tr>
+                                        <td class="font-mono text-[10px] max-w-md break-words">
+                                            {{truncate .QueryText 150}}
+                                        </td>
+                                        <td class="text-xs">{{printf "%.2f" .DBLoad}}</td>
+                                        <td class="text-xs">{{printf "%.1f" .CallsPerSec}}</td>
+                                        <td class="text-xs">{{printf "%.1f" .AvgLatencyMs}}ms</td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+        </details>
+        {{end}}
+    {{else}}
+    <div class="py-10 text-center text-base-content/60 italic text-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+        </svg>
+        <div>No RDS instances found with Performance Insights enabled.</div>
+        <div class="text-xs text-base-content/40 mt-1">Check your AWS configuration and IAM permissions.</div>
+    </div>
+    {{end}}
+</div>
+{{end}}

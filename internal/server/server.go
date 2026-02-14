@@ -30,10 +30,15 @@ type Server struct {
 	failuresBroadcaster      *broadcaster.Broadcaster[[]aws.Execution]
 	stateMachinesBroadcaster *broadcaster.Broadcaster[[]StateMachineItem]
 	completedBroadcaster     *broadcaster.Broadcaster[[]aws.Execution]
+	rdsBroadcaster           *broadcaster.Broadcaster[[]aws.RDSMetric]
 
 	activeCacheMu sync.Mutex
 	activeCache   map[string][]aws.Execution
 	activeCacheAt map[string]time.Time
+
+	rdsCacheMu sync.Mutex
+	rdsCache   map[string][]aws.RDSMetric
+	rdsCacheAt map[string]time.Time
 
 	jokeMu      sync.Mutex
 	chuckJoke   string
@@ -78,6 +83,8 @@ func NewServer(awsManager *aws.ClientManager, staticFS fs.FS, cfg *config.Config
 		cfg:                  cfg,
 		activeCache:          make(map[string][]aws.Execution),
 		activeCacheAt:        make(map[string]time.Time),
+		rdsCache:             make(map[string][]aws.RDSMetric),
+		rdsCacheAt:           make(map[string]time.Time),
 		searchStates:         make(map[string]*searchState),
 		searchStatesTTL:      searchTTL,
 		seenActive:           make(map[string]time.Time),
@@ -98,19 +105,22 @@ func (s *Server) initBroadcasters() {
 	failuresInterval := 180 * time.Second
 	stateMachinesInterval := 10 * time.Minute
 	completedInterval := 60 * time.Second
+	rdsInterval := 30 * time.Second
 	if s.cfg != nil {
 		activeInterval = s.cfg.Polling.ActiveInterval
 		failuresInterval = s.cfg.Polling.FailuresInterval
 		stateMachinesInterval = s.cfg.Polling.StateMachinesInterval
+		rdsInterval = s.cfg.Polling.RDSFastInterval
 	}
 	// Keep completed + failures responsive to active updates.
 	completedInterval = activeInterval
 	failuresInterval = activeInterval
-	slog.Info("polling intervals", "active", activeInterval, "failures", failuresInterval, "state_machines", stateMachinesInterval, "completed", completedInterval)
+	slog.Info("polling intervals", "active", activeInterval, "failures", failuresInterval, "state_machines", stateMachinesInterval, "completed", completedInterval, "rds", rdsInterval)
 	s.activeBroadcaster = broadcaster.NewBroadcaster(s.fetchActiveExecutions, activeInterval, "active-executions")
 	s.failuresBroadcaster = broadcaster.NewBroadcaster(s.fetchRecentFailures, failuresInterval, "recent-failures")
 	s.stateMachinesBroadcaster = broadcaster.NewBroadcaster(s.fetchStateMachines, stateMachinesInterval, "state-machines")
 	s.completedBroadcaster = broadcaster.NewBroadcaster(s.fetchRecentCompleted, completedInterval, "recent-completed")
+	s.rdsBroadcaster = broadcaster.NewBroadcaster(s.fetchRDSMetrics, rdsInterval, "rds-metrics")
 }
 
 func (s *Server) parseTemplates() {
@@ -149,6 +159,20 @@ func (s *Server) parseTemplates() {
 		},
 		"formatTimeLocal": func(t time.Time) string {
 			return t.In(time.Local).Format("2006-01-02 15:04:05 MST")
+		},
+		"truncate": func(s string, length int) string {
+			if len(s) <= length {
+				return s
+			}
+			return s[:length] + "..."
+		},
+		"cpuColorClass": func(cpu float64) string {
+			if cpu >= 80 {
+				return "text-error"
+			} else if cpu >= 60 {
+				return "text-warning"
+			}
+			return "text-success"
 		},
 	}
 
@@ -242,4 +266,16 @@ func (s *Server) cleanupOldSearchStates() {
 			delete(s.searchStates, key)
 		}
 	}
+}
+
+// getActiveExecutionsCount returns the total number of active executions across all environments
+func (s *Server) getActiveExecutionsCount() int {
+	s.activeCacheMu.Lock()
+	defer s.activeCacheMu.Unlock()
+
+	count := 0
+	for _, execs := range s.activeCache {
+		count += len(execs)
+	}
+	return count
 }

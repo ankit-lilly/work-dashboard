@@ -14,9 +14,13 @@
          s3_prefix_loading: false,
          active_jobs_count: 0,
          recent_failures_count: 0,
-         recent_completed_count: 0
+         recent_completed_count: 0,
+         rdsEnv: 'all',
+         selectedRdsDb: '',
+         rds_loading: false,
+         rds_db_count: 0
      }"
-     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">
+     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'}); @get('/api/rds-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">
 
     <!-- Active Executions -->
     <section>
@@ -144,6 +148,34 @@
         <div id="state-machine-executions" class="card bg-base-100 shadow-sm border border-base-300 max-h-[60vh] overflow-y-auto">
             <div id="state-machine-executions-content" class="p-8 text-center text-sm text-base-content/60">
                 Select a state machine to view executions
+            </div>
+        </div>
+    </section>
+
+    <!-- RDS Performance Insights -->
+    <section>
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold">RDS Performance Insights</h2>
+                <span class="badge badge-sm badge-ghost">Last 2h</span>
+            </div>
+            <div class="join join-horizontal">
+                <select id="rds-env" aria-label="Filter environment"
+                    class="select select-sm select-bordered join-item"
+                    data-bind="rdsEnv"
+                    data-on:change="$selectedRdsDb = ''">
+                    <option value="all">All Envs</option>
+                    <option value="dev">Dev</option>
+                    <option value="qa">QA</option>
+                    <option value="prod">Prod</option>
+                </select>
+            </div>
+        </div>
+        <div id="rds-metrics-container" class="card bg-base-100 shadow-sm border border-base-300 max-h-[45vh] overflow-y-auto">
+            <div id="rds-metrics-content">
+                <div class="p-8 text-center text-sm text-base-content/60">
+                    Loading RDS metrics...
+                </div>
             </div>
         </div>
     </section>
