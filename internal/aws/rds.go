@@ -53,10 +53,11 @@ type CPUDataPoint struct {
 
 // ConnectionPoolStats represents database connection metrics
 type ConnectionPoolStats struct {
-	ActiveConnections int
-	IdleConnections   int
-	MaxConnections    int
-	UsedPercent       float64
+	ActiveConnections    int
+	IdleConnections      int
+	MaxConnections       int
+	UsedPercent          float64
+	MaxConnectionsSource string // "api" or "formula" - indicates where max_connections came from
 }
 
 // RDSMetric combines instance info with metrics
@@ -489,7 +490,7 @@ func (c *Client) GetConnectionPoolStats(ctx context.Context, dbInstanceId, insta
 		maxConn, err = c.GetMaxConnectionsFromParameterGroup(ctx, paramGroupName)
 		if err != nil {
 			// Log but don't fail - we'll fall back to estimation
-			slog.Debug("failed to get max_connections from parameter group, using estimation",
+			slog.Info("failed to get max_connections from parameter group, will use formula estimation",
 				"env", c.EnvName,
 				"db", dbInstanceId,
 				"param_group", paramGroupName,
@@ -500,18 +501,22 @@ func (c *Client) GetConnectionPoolStats(ctx context.Context, dbInstanceId, insta
 	// Fall back to engine-specific formula estimation if API call failed
 	if maxConn == 0 {
 		maxConn = estimateMaxConnections(instanceClass, engine)
-		slog.Debug("using estimated max_connections",
+		stats.MaxConnectionsSource = "formula"
+		slog.Info("using formula-based max_connections estimation",
 			"env", c.EnvName,
 			"db", dbInstanceId,
 			"instance_class", instanceClass,
 			"engine", engine,
-			"estimated", maxConn)
+			"estimated_max_connections", maxConn,
+			"source", "formula")
 	} else {
-		slog.Info("retrieved actual max_connections from parameter group",
+		stats.MaxConnectionsSource = "api"
+		slog.Info("retrieved actual max_connections from RDS parameter group",
 			"env", c.EnvName,
 			"db", dbInstanceId,
 			"param_group", paramGroupName,
-			"max_connections", maxConn)
+			"max_connections", maxConn,
+			"source", "api")
 	}
 
 	stats.MaxConnections = maxConn

@@ -57,7 +57,14 @@
                             </div>
                             <div class="stat-title text-xs">Active Connections</div>
                             <div class="stat-value text-primary text-2xl">{{.ConnectionPool.ActiveConnections}}</div>
-                            <div class="stat-desc text-xs">of {{.ConnectionPool.MaxConnections}} max</div>
+                            <div class="stat-desc text-xs">
+                                of {{.ConnectionPool.MaxConnections}} max
+                                {{if eq .ConnectionPool.MaxConnectionsSource "api"}}
+                                <span class="badge badge-success badge-xs ml-1" title="Retrieved from RDS Parameter Group API">API</span>
+                                {{else if eq .ConnectionPool.MaxConnectionsSource "formula"}}
+                                <span class="badge badge-info badge-xs ml-1" title="Calculated using engine-specific formula">Formula</span>
+                                {{end}}
+                            </div>
                         </div>
 
                         <div class="stat">
