@@ -64,8 +64,8 @@ func (s *Server) fetchRDSMetrics() ([]aws.RDSMetric, error) {
 		}
 		s.rdsCacheMu.Unlock()
 
-		// Fetch fresh data
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Fetch fresh data (now parallelized within GetRDSMetrics)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		metrics, err := client.GetRDSMetrics(ctx, metricHours, maxQueries)
 		cancel()
 
@@ -102,6 +102,9 @@ func (s *Server) handleRDSUpdates(w http.ResponseWriter, r *http.Request) {
 	rdsCh := s.rdsBroadcaster.Subscribe()
 	defer s.rdsBroadcaster.Unsubscribe(rdsCh)
 
+	// Send initial loading state
+	sse.PatchSignals([]byte(`{"rds_loading": true, "rds_db_count": 0}`))
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -111,8 +114,8 @@ func (s *Server) handleRDSUpdates(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Patch signals for counts
-			sse.PatchSignals([]byte(fmt.Sprintf(`{"rds_db_count": %d}`, len(allMetrics))))
+			// Update loading state and count
+			sse.PatchSignals([]byte(fmt.Sprintf(`{"rds_loading": false, "rds_db_count": %d}`, len(allMetrics))))
 
 			var buf bytes.Buffer
 			tmpl := s.templateSet("index")

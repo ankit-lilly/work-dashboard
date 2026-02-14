@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,9 +22,11 @@ type DBInstanceInfo struct {
 	Env                        string
 	DBInstanceId               string
 	DBResourceId               string // For Performance Insights API
+	DBInstanceClass            string // Instance type (e.g., db.t3.small)
 	Engine                     string
 	Status                     string
 	PerformanceInsightsEnabled bool
+	DBParameterGroupName       string // Parameter group name for max_connections lookup
 }
 
 // QueryMetric represents a query performance metric
@@ -113,18 +116,82 @@ func (c *Client) ListRDSInstances(ctx context.Context) ([]DBInstanceInfo, error)
 				status = *db.DBInstanceStatus
 			}
 
+			instanceClass := ""
+			if db.DBInstanceClass != nil {
+				instanceClass = *db.DBInstanceClass
+			}
+
+			// Get parameter group name
+			paramGroupName := ""
+			if len(db.DBParameterGroups) > 0 && db.DBParameterGroups[0].DBParameterGroupName != nil {
+				paramGroupName = *db.DBParameterGroups[0].DBParameterGroupName
+			}
+
 			instances = append(instances, DBInstanceInfo{
 				Env:                        c.EnvName,
 				DBInstanceId:               *db.DBInstanceIdentifier,
 				DBResourceId:               resourceId,
+				DBInstanceClass:            instanceClass,
 				Engine:                     engine,
 				Status:                     status,
 				PerformanceInsightsEnabled: piEnabled,
+				DBParameterGroupName:       paramGroupName,
 			})
 		}
 	}
 
 	return instances, nil
+}
+
+// GetMaxConnectionsFromParameterGroup retrieves the actual max_connections value from RDS parameter group
+func (c *Client) GetMaxConnectionsFromParameterGroup(ctx context.Context, parameterGroupName string) (int, error) {
+	if parameterGroupName == "" {
+		return 0, fmt.Errorf("parameter group name is required")
+	}
+
+	input := &rds.DescribeDBParametersInput{
+		DBParameterGroupName: aws.String(parameterGroupName),
+		Source:               aws.String("user"), // Get user-modified values, falls back to system defaults
+	}
+
+	// max_connections parameter name varies by engine
+	maxConnParam := "max_connections"
+
+	paginator := rds.NewDescribeDBParametersPaginator(c.RDS, input)
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
+		if err != nil {
+			if isPermissionError(err) {
+				slog.Warn("insufficient permissions for rds:DescribeDBParameters", "env", c.EnvName, "err", err)
+				return 0, fmt.Errorf("permission denied: %w", err)
+			}
+			return 0, fmt.Errorf("failed to describe parameters: %w", err)
+		}
+
+		for _, param := range output.Parameters {
+			if param.ParameterName != nil && *param.ParameterName == maxConnParam {
+				if param.ParameterValue != nil {
+					// Parse the value
+					var maxConn int
+					_, err := fmt.Sscanf(*param.ParameterValue, "%d", &maxConn)
+					if err == nil && maxConn > 0 {
+						return maxConn, nil
+					}
+
+					// Handle formula-based values like {DBInstanceClassMemory/9531392}
+					// Extract the formula and evaluate if needed
+					if strings.Contains(*param.ParameterValue, "DBInstanceClassMemory") {
+						// This is a formula, we can't evaluate it without instance memory
+						// Return 0 to signal we need to use fallback
+						return 0, fmt.Errorf("parameter uses formula: %s", *param.ParameterValue)
+					}
+				}
+			}
+		}
+	}
+
+	// Parameter not found or not customized
+	return 0, fmt.Errorf("max_connections parameter not found in parameter group")
 }
 
 // GetTopQueries retrieves top SQL queries by DB load
@@ -277,8 +344,101 @@ func (c *Client) GetCPUMetrics(ctx context.Context, dbResourceId string, hours i
 	return cpuData, nil
 }
 
+// estimateMaxConnections estimates max_connections based on RDS instance class and engine
+// PostgreSQL formula: LEAST({DBInstanceClassMemory/9531392}, 5000)
+// MySQL formula: LEAST({DBInstanceClassMemory/12582880}, 16000)
+// These are approximate values based on AWS documentation
+func estimateMaxConnections(instanceClass, engine string) int {
+	// Determine which formula to use based on engine
+	isMySQL := strings.Contains(strings.ToLower(engine), "mysql") ||
+		strings.Contains(strings.ToLower(engine), "mariadb")
+
+	// Map of common instance classes to memory in MB
+	memoryMap := map[string]int{
+		// T3 instances (burstable)
+		"db.t3.micro":   1024,  // 1 GB
+		"db.t3.small":   2048,  // 2 GB
+		"db.t3.medium":  4096,  // 4 GB
+		"db.t3.large":   8192,  // 8 GB
+		"db.t3.xlarge":  16384, // 16 GB
+		"db.t3.2xlarge": 32768, // 32 GB
+
+		// T4g instances (ARM burstable)
+		"db.t4g.micro":   1024,
+		"db.t4g.small":   2048,
+		"db.t4g.medium":  4096,
+		"db.t4g.large":   8192,
+		"db.t4g.xlarge":  16384,
+		"db.t4g.2xlarge": 32768,
+
+		// M5 instances (general purpose)
+		"db.m5.large":    8192,   // 8 GB
+		"db.m5.xlarge":   16384,  // 16 GB
+		"db.m5.2xlarge":  32768,  // 32 GB
+		"db.m5.4xlarge":  65536,  // 64 GB
+		"db.m5.8xlarge":  131072, // 128 GB
+		"db.m5.12xlarge": 196608, // 192 GB
+		"db.m5.16xlarge": 262144, // 256 GB
+		"db.m5.24xlarge": 393216, // 384 GB
+
+		// M6g instances (ARM general purpose)
+		"db.m6g.large":    8192,
+		"db.m6g.xlarge":   16384,
+		"db.m6g.2xlarge":  32768,
+		"db.m6g.4xlarge":  65536,
+		"db.m6g.8xlarge":  131072,
+		"db.m6g.12xlarge": 196608,
+		"db.m6g.16xlarge": 262144,
+
+		// R5 instances (memory optimized)
+		"db.r5.large":    16384,  // 16 GB
+		"db.r5.xlarge":   32768,  // 32 GB
+		"db.r5.2xlarge":  65536,  // 64 GB
+		"db.r5.4xlarge":  131072, // 128 GB
+		"db.r5.8xlarge":  262144, // 256 GB
+		"db.r5.12xlarge": 393216, // 384 GB
+		"db.r5.16xlarge": 524288, // 512 GB
+		"db.r5.24xlarge": 786432, // 768 GB
+
+		// R6g instances (ARM memory optimized)
+		"db.r6g.large":    16384,
+		"db.r6g.xlarge":   32768,
+		"db.r6g.2xlarge":  65536,
+		"db.r6g.4xlarge":  131072,
+		"db.r6g.8xlarge":  262144,
+		"db.r6g.12xlarge": 393216,
+		"db.r6g.16xlarge": 524288,
+	}
+
+	memoryMB, ok := memoryMap[instanceClass]
+	if !ok {
+		// Default fallback for unknown instances
+		return 200
+	}
+
+	// Convert MB to bytes
+	memoryBytes := int64(memoryMB) * 1024 * 1024
+
+	var maxConn int
+	if isMySQL {
+		// MySQL/MariaDB formula
+		maxConn = int(memoryBytes / 12582880)
+		if maxConn > 16000 {
+			maxConn = 16000
+		}
+	} else {
+		// PostgreSQL formula (default)
+		maxConn = int(memoryBytes / 9531392)
+		if maxConn > 5000 {
+			maxConn = 5000
+		}
+	}
+
+	return maxConn
+}
+
 // GetConnectionPoolStats retrieves connection pool metrics from CloudWatch
-func (c *Client) GetConnectionPoolStats(ctx context.Context, dbInstanceId string) (ConnectionPoolStats, error) {
+func (c *Client) GetConnectionPoolStats(ctx context.Context, dbInstanceId, instanceClass, engine, paramGroupName string) (ConnectionPoolStats, error) {
 	stats := ConnectionPoolStats{}
 
 	endTime := time.Now()
@@ -323,17 +483,38 @@ func (c *Client) GetConnectionPoolStats(ctx context.Context, dbInstanceId string
 		}
 	}
 
-	// Set reasonable defaults for max connections based on instance type
-	// These are typical values - actual may vary based on parameter group settings
-	stats.MaxConnections = 100 // Conservative default
-
-	// If we have active connections, we can make a better estimate
-	if stats.ActiveConnections > 0 {
-		// Ensure max is at least higher than current
-		if stats.ActiveConnections >= stats.MaxConnections {
-			stats.MaxConnections = stats.ActiveConnections + 50
+	// Try to get actual max_connections from parameter group first
+	maxConn := 0
+	if paramGroupName != "" {
+		maxConn, err = c.GetMaxConnectionsFromParameterGroup(ctx, paramGroupName)
+		if err != nil {
+			// Log but don't fail - we'll fall back to estimation
+			slog.Debug("failed to get max_connections from parameter group, using estimation",
+				"env", c.EnvName,
+				"db", dbInstanceId,
+				"param_group", paramGroupName,
+				"err", err)
 		}
 	}
+
+	// Fall back to engine-specific formula estimation if API call failed
+	if maxConn == 0 {
+		maxConn = estimateMaxConnections(instanceClass, engine)
+		slog.Debug("using estimated max_connections",
+			"env", c.EnvName,
+			"db", dbInstanceId,
+			"instance_class", instanceClass,
+			"engine", engine,
+			"estimated", maxConn)
+	} else {
+		slog.Info("retrieved actual max_connections from parameter group",
+			"env", c.EnvName,
+			"db", dbInstanceId,
+			"param_group", paramGroupName,
+			"max_connections", maxConn)
+	}
+
+	stats.MaxConnections = maxConn
 
 	// Calculate percentage
 	if stats.MaxConnections > 0 {
@@ -349,64 +530,79 @@ func (c *Client) GetConnectionPoolStats(ctx context.Context, dbInstanceId string
 	return stats, nil
 }
 
-// GetRDSMetrics retrieves comprehensive RDS metrics for all instances
+// GetRDSMetrics retrieves comprehensive RDS metrics for all instances in parallel
 func (c *Client) GetRDSMetrics(ctx context.Context, hours int, maxQueries int) ([]RDSMetric, error) {
 	instances, err := c.ListRDSInstances(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	var metrics []RDSMetric
+	// Fetch metrics for each instance in parallel
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	metrics := make([]RDSMetric, 0, len(instances))
+
 	for _, instance := range instances {
-		metric := RDSMetric{
-			Env:                        instance.Env,
-			DBInstanceId:               instance.DBInstanceId,
-			DBResourceId:               instance.DBResourceId,
-			Engine:                     instance.Engine,
-			Status:                     instance.Status,
-			PerformanceInsightsEnabled: instance.PerformanceInsightsEnabled,
-		}
+		wg.Add(1)
+		go func(inst DBInstanceInfo) {
+			defer wg.Done()
 
-		if !instance.PerformanceInsightsEnabled {
-			metric.Error = "Performance Insights not enabled"
-			metrics = append(metrics, metric)
-			continue
-		}
-
-		// Get top queries
-		queries, err := c.GetTopQueries(ctx, instance.DBResourceId, hours)
-		if err != nil {
-			metric.Error = fmt.Sprintf("Failed to get queries: %v", err)
-			slog.Warn("failed to get top queries", "env", c.EnvName, "db", instance.DBInstanceId, "err", err)
-		} else {
-			// Limit to maxQueries
-			if len(queries) > maxQueries {
-				queries = queries[:maxQueries]
+			metric := RDSMetric{
+				Env:                        inst.Env,
+				DBInstanceId:               inst.DBInstanceId,
+				DBResourceId:               inst.DBResourceId,
+				Engine:                     inst.Engine,
+				Status:                     inst.Status,
+				PerformanceInsightsEnabled: inst.PerformanceInsightsEnabled,
 			}
-			metric.TopQueries = queries
-		}
 
-		// Get CPU metrics
-		cpuData, err := c.GetCPUMetrics(ctx, instance.DBResourceId, hours)
-		if err != nil {
-			slog.Warn("failed to get CPU metrics", "env", c.EnvName, "db", instance.DBInstanceId, "err", err)
-		} else {
-			metric.CPUCurrent = cpuData.Current
-			metric.CPUAverage = cpuData.Average
-			metric.CPUMax = cpuData.Max
-			metric.CPUDataPoints = cpuData.DataPoints
-		}
+			if !inst.PerformanceInsightsEnabled {
+				metric.Error = "Performance Insights not enabled"
+				mu.Lock()
+				metrics = append(metrics, metric)
+				mu.Unlock()
+				return
+			}
 
-		// Get connection pool stats
-		connStats, err := c.GetConnectionPoolStats(ctx, instance.DBInstanceId)
-		if err != nil {
-			slog.Warn("failed to get connection pool stats", "env", c.EnvName, "db", instance.DBInstanceId, "err", err)
-		} else {
-			metric.ConnectionPool = connStats
-		}
+			// Get top queries
+			queries, err := c.GetTopQueries(ctx, inst.DBResourceId, hours)
+			if err != nil {
+				metric.Error = fmt.Sprintf("Failed to get queries: %v", err)
+				slog.Warn("failed to get top queries", "env", c.EnvName, "db", inst.DBInstanceId, "err", err)
+			} else {
+				// Limit to maxQueries
+				if len(queries) > maxQueries {
+					queries = queries[:maxQueries]
+				}
+				metric.TopQueries = queries
+			}
 
-		metrics = append(metrics, metric)
+			// Get CPU metrics
+			cpuData, err := c.GetCPUMetrics(ctx, inst.DBResourceId, hours)
+			if err != nil {
+				slog.Warn("failed to get CPU metrics", "env", c.EnvName, "db", inst.DBInstanceId, "err", err)
+			} else {
+				metric.CPUCurrent = cpuData.Current
+				metric.CPUAverage = cpuData.Average
+				metric.CPUMax = cpuData.Max
+				metric.CPUDataPoints = cpuData.DataPoints
+			}
+
+			// Get connection pool stats
+			connStats, err := c.GetConnectionPoolStats(ctx, inst.DBInstanceId, inst.DBInstanceClass, inst.Engine, inst.DBParameterGroupName)
+			if err != nil {
+				slog.Warn("failed to get connection pool stats", "env", c.EnvName, "db", inst.DBInstanceId, "err", err)
+			} else {
+				metric.ConnectionPool = connStats
+			}
+
+			mu.Lock()
+			metrics = append(metrics, metric)
+			mu.Unlock()
+		}(instance)
 	}
+
+	wg.Wait()
 
 	return metrics, nil
 }

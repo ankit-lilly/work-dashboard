@@ -227,9 +227,19 @@
             </summary>
             <div class="collapse-content pt-0">
                 <div id="rds-metrics-container" class="max-h-[45vh] overflow-y-auto">
-                    <div id="rds-metrics-content">
-                        <div class="p-8 text-center text-sm text-base-content/60">
-                            Loading RDS metrics...
+                    <!-- Loading Indicator -->
+                    <div data-show="$rds_loading" class="py-10 text-center">
+                        <span class="loading loading-spinner loading-lg text-primary"></span>
+                        <div class="text-sm text-base-content/60 mt-4">Loading RDS metrics...</div>
+                    </div>
+
+                    <!-- RDS Content -->
+                    <div id="rds-metrics-content" data-show="!$rds_loading">
+                        <div class="py-10 text-center text-base-content/60 italic text-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                            </svg>
+                            <div>Waiting for RDS data...</div>
                         </div>
                     </div>
                 </div>
