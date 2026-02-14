@@ -44,13 +44,14 @@ type searchUpdate struct {
 }
 
 type searchState struct {
-	mu        sync.Mutex
-	running   bool
-	done      bool
-	canceled  bool
-	results   []RecordSearchResult
-	seen      map[string]struct{}
-	listeners map[chan searchUpdate]struct{}
+	mu           sync.Mutex
+	running      bool
+	done         bool
+	canceled     bool
+	results      []RecordSearchResult
+	seen         map[string]struct{}
+	listeners    map[chan searchUpdate]struct{}
+	lastActivity time.Time
 }
 
 func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +72,7 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 		var buf bytes.Buffer
 		tmpl := s.templateSet("index")
 		if tmpl != nil {
-			_ = tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
+			if err := tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
 				"Email":     email,
 				"Env":       env,
 				"SearchKey": "",
@@ -79,8 +80,11 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 				"Error":     err.Error(),
 				"Searching": false,
 				"Stopped":   false,
-			})
-			sse.PatchElements(buf.String())
+			}); err != nil {
+				slog.Error("template render failed", "template", "record-search-results", "error", err)
+			} else {
+				sse.PatchElements(buf.String())
+			}
 		}
 		return
 	}
@@ -101,15 +105,18 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 		searching := email != "" && !state.done && !state.canceled
 		state.mu.Unlock()
 
-		_ = tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
+		if err := tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
 			"Email":     email,
 			"Env":       env,
 			"SearchKey": key,
 			"Results":   existing,
 			"Error":     nil,
 			"Searching": searching,
-		})
-		sse.PatchElements(buf.String())
+		}); err != nil {
+			slog.Error("template render failed", "template", "record-search-results", "error", err)
+		} else {
+			sse.PatchElements(buf.String())
+		}
 	}
 
 	if email == "" {
@@ -125,7 +132,7 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 
 	if shouldStart {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 			defer cancel()
 			s.searchEmailStreaming(ctx, email, env, stateMachine, startAt, endAt, state)
 		}()
@@ -149,14 +156,17 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 				if tmpl == nil {
 					return
 				}
-				_ = tmpl.ExecuteTemplate(&buf, "record-search-rows", map[string]any{
+				if err := tmpl.ExecuteTemplate(&buf, "record-search-rows", map[string]any{
 					"Results": upd.newResults,
-				})
-				sse.PatchElements(
-					buf.String(),
-					datastar.WithSelector("#record-search-rows"),
-					datastar.WithMode(datastar.ElementPatchModeAppend),
-				)
+				}); err != nil {
+					slog.Error("template render failed", "template", "record-search-rows", "error", err)
+				} else {
+					sse.PatchElements(
+						buf.String(),
+						datastar.WithSelector("#record-search-rows"),
+						datastar.WithMode(datastar.ElementPatchModeAppend),
+					)
+				}
 			}
 
 			var statusBuf bytes.Buffer
@@ -164,16 +174,19 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 			if tmpl == nil {
 				return
 			}
-			_ = tmpl.ExecuteTemplate(&statusBuf, "record-search-status", map[string]any{
+			if err := tmpl.ExecuteTemplate(&statusBuf, "record-search-status", map[string]any{
 				"Searching": !upd.done,
 				"Email":     email,
 				"Stopped":   false,
-			})
-			sse.PatchElements(
-				statusBuf.String(),
-				datastar.WithSelector("#record-search-status"),
-				datastar.WithMode(datastar.ElementPatchModeOuter),
-			)
+			}); err != nil {
+				slog.Error("template render failed", "template", "record-search-status", "error", err)
+			} else {
+				sse.PatchElements(
+					statusBuf.String(),
+					datastar.WithSelector("#record-search-status"),
+					datastar.WithMode(datastar.ElementPatchModeOuter),
+				)
+			}
 
 			if upd.done {
 				keepAlive(r.Context(), w)
@@ -221,16 +234,19 @@ func (s *Server) handleRecordSearchCancel(w http.ResponseWriter, r *http.Request
 	if tmpl == nil {
 		return
 	}
-	_ = tmpl.ExecuteTemplate(&buf, "record-search-status", map[string]any{
+	if err := tmpl.ExecuteTemplate(&buf, "record-search-status", map[string]any{
 		"Searching": false,
 		"Email":     "",
 		"Stopped":   true,
-	})
-	sse.PatchElements(
-		buf.String(),
-		datastar.WithSelector("#record-search-status"),
-		datastar.WithMode(datastar.ElementPatchModeOuter),
-	)
+	}); err != nil {
+		slog.Error("template render failed", "template", "record-search-status", "error", err)
+	} else {
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#record-search-status"),
+			datastar.WithMode(datastar.ElementPatchModeOuter),
+		)
+	}
 }
 
 func (s *Server) searchEmailStreaming(ctx context.Context, email, env, stateMachine string, startAt, endAt *time.Time, state *searchState) {
@@ -366,11 +382,15 @@ func (s *Server) getOrCreateSearchState(key string) *searchState {
 	s.searchMu.Lock()
 	defer s.searchMu.Unlock()
 	if st, ok := s.searchStates[key]; ok {
+		st.mu.Lock()
+		st.lastActivity = time.Now()
+		st.mu.Unlock()
 		return st
 	}
 	st := &searchState{
-		seen:      make(map[string]struct{}),
-		listeners: make(map[chan searchUpdate]struct{}),
+		seen:         make(map[string]struct{}),
+		listeners:    make(map[chan searchUpdate]struct{}),
+		lastActivity: time.Now(),
 	}
 	s.searchStates[key] = st
 	return st
@@ -379,6 +399,7 @@ func (s *Server) getOrCreateSearchState(key string) *searchState {
 func (s *searchState) addResult(res RecordSearchResult) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lastActivity = time.Now()
 	key := res.ExecutionArn + "|" + strconv.Itoa(res.Index)
 	if _, ok := s.seen[key]; ok {
 		return false
@@ -409,8 +430,13 @@ func (s *searchState) subscribe() chan searchUpdate {
 
 func (s *searchState) unsubscribe(ch chan searchUpdate) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.listeners[ch]; !exists {
+		return // Already unsubscribed
+	}
+
 	delete(s.listeners, ch)
-	s.mu.Unlock()
 	close(ch)
 }
 

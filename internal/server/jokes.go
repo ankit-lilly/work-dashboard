@@ -113,7 +113,6 @@ func (s *Server) getJeffDeanFact(ctx context.Context) string {
 		return ""
 	}
 
-	rand.Seed(time.Now().UnixNano())
 	joke := strings.TrimSpace(facts[rand.Intn(len(facts))])
 	if joke == "" {
 		return ""

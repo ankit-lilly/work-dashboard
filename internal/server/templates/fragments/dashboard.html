@@ -50,88 +50,94 @@
 <div class="divide-y divide-base-200">
     {{if .Jobs}}
         {{range .Jobs}}
-        <details class="collapse collapse-arrow border border-base-200 bg-base-100/90{{if .New}} flash-new{{end}}">
-            <summary class="collapse-title text-xs font-medium">
-                <span class="badge badge-ghost badge-xs mr-2">{{.Env}}</span>
-                <span class="font-mono break-all">{{.ExecutionName}}</span>
-                <span class="ml-2 text-base-content/60">{{.Name}}</span>
-                {{if .StartTime}}<span class="ml-2 text-base-content/60">{{formatTimeLocal .StartTime}}</span>{{end}}
-                {{if .StopTime}}<span class="ml-2 text-base-content/40">→ {{formatTimeLocal .StopTime}}</span>{{end}}
-            </summary>
-            <div class="collapse-content space-y-3">
-                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/60">
-                    <div>
-                        {{if .StartTime}}Start: {{formatTimeLocal .StartTime}}{{end}}
-                        {{if .StopTime}}<span class="ml-2">Stop: {{formatTimeLocal .StopTime}}</span>{{end}}
-                        {{if .Duration}}<span class="ml-2">Duration: {{.Duration}}</span>{{end}}
-                    </div>
-                    <div>
-                        {{template "states-viewer-link" (dict "Env" .Env "ExecutionArn" .ExecutionArn)}}
-                    </div>
+        <details class="collapse collapse-arrow border-b border-base-200 bg-base-100{{if .New}} flash-new{{end}}">
+            <summary class="collapse-title min-h-0 py-4 cursor-pointer">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <span class="badge badge-ghost badge-xs">{{.Env}}</span>
+                    <span class="font-mono break-words">{{.ExecutionName}}</span>
+                    <span class="text-base-content/60">{{.Name}}</span>
+                    {{if .StartTime}}<span class="text-base-content/60">{{formatTimeLocal .StartTime}}</span>{{end}}
+                    {{if .StopTime}}<span class="text-base-content/40">→ {{formatTimeLocal .StopTime}}</span>{{end}}
                 </div>
-
-                {{if or .InputBucket .OutputPrefix}}
-                <details class="collapse collapse-arrow border border-base-200 bg-base-100/80">
-                    <summary class="collapse-title text-xs font-medium">Input / Output Files</summary>
-                    {{if .InputBucket}}
-                    <div class="collapse-content space-y-2 text-xs text-base-content/60">
-                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
-                            Input: {{.InputBucket}}/{{.InputKey}}
-                            {{if .InputSize}}<span class="ml-2">({{.InputSize}})</span>{{end}}
+            </summary>
+            <div class="collapse-content pb-4">
+                <div class="space-y-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/60 bg-base-200/30 rounded-lg p-3">
+                        <div>
+                            {{if .StartTime}}Start: {{formatTimeLocal .StartTime}}{{end}}
+                            {{if .StopTime}}<span class="ml-2">Stop: {{formatTimeLocal .StopTime}}</span>{{end}}
+                            {{if .Duration}}<span class="ml-2">Duration: {{.Duration}}</span>{{end}}
                         </div>
-                        <div class="flex flex-wrap gap-2">
-                            <a class="btn btn-outline btn-xs"
-                               href="/api/s3-download?env={{.Env}}&bucket={{.InputBucket}}&key={{.InputKey}}">
-                                Download Input
-                            </a>
+                        <div>
+                            {{template "states-viewer-link" (dict "Env" .Env "ExecutionArn" .ExecutionArn)}}
                         </div>
                     </div>
-                    {{end}}
 
-                    {{if .OutputPrefix}}
-                    <div class="collapse-content space-y-2 text-xs text-base-content/60">
-                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
-                            Output Prefix: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputPrefix}}
-                        </div>
-                        {{if .OutputManifestKey}}
-                        <div class="break-all">
-                            Manifest: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputManifestKey}}
-                            <a class="link link-primary ml-2" href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
-                                Download
-                            </a>
-                        </div>
-                        {{end}}
-                        <form class="flex flex-wrap items-center gap-2"
-                              data-on:submit="@get('/api/s3-prefix-list', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
-                              data-indicator:s3_prefix_loading>
-                            <input type="hidden" name="env" value="{{.Env}}" />
-                            <input type="hidden" name="bucket" value="{{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}" />
-                            <input type="hidden" name="prefix" value="{{.OutputPrefix}}" />
-                            <input type="hidden" name="target_id" value="recent-completed-output-{{idSafe .ExecutionArn}}" />
-                            <button type="submit" class="btn btn-outline btn-xs">
-                                List Output Files
-                            </button>
-                            {{if .OutputManifestKey}}
-                            <a class="btn btn-outline btn-xs"
-                               href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
-                                Download Manifest
-                            </a>
+                    {{if or .InputBucket .OutputPrefix}}
+                    <details class="collapse collapse-arrow border border-base-200 rounded-lg bg-base-100">
+                        <summary class="collapse-title text-xs font-medium min-h-0 py-3">Input / Output Files</summary>
+                        <div class="collapse-content space-y-3 pb-3">
+                            {{if .InputBucket}}
+                            <div class="space-y-2 text-xs text-base-content/60">
+                                <div class="break-words font-mono text-[11px] leading-snug rounded-lg bg-base-200/70 px-3 py-2">
+                                    Input: {{.InputBucket}}/{{.InputKey}}
+                                    {{if .InputSize}}<span class="ml-2">({{.InputSize}})</span>{{end}}
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <a class="btn btn-outline btn-xs"
+                                       href="/api/s3-download?env={{.Env}}&bucket={{.InputBucket}}&key={{.InputKey}}">
+                                        Download Input
+                                    </a>
+                                </div>
+                            </div>
                             {{end}}
-                            <span data-show="$s3_prefix_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
-                                <span class="loading loading-spinner loading-xs"></span>
-                                Loading...
-                            </span>
-                        </form>
-                        <div id="recent-completed-output-{{idSafe .ExecutionArn}}" class="mt-2"></div>
-                    </div>
+
+                            {{if .OutputPrefix}}
+                            <div class="space-y-2 text-xs text-base-content/60">
+                                <div class="break-words font-mono text-[11px] leading-snug rounded-lg bg-base-200/70 px-3 py-2">
+                                    Output Prefix: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputPrefix}}
+                                </div>
+                                {{if .OutputManifestKey}}
+                                <div class="break-words">
+                                    Manifest: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputManifestKey}}
+                                    <a class="link link-primary ml-2" href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
+                                        Download
+                                    </a>
+                                </div>
+                                {{end}}
+                                <form class="flex flex-wrap items-center gap-2"
+                                      data-on:submit="@get('/api/s3-prefix-list', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
+                                      data-indicator:s3_prefix_loading>
+                                    <input type="hidden" name="env" value="{{.Env}}" />
+                                    <input type="hidden" name="bucket" value="{{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}" />
+                                    <input type="hidden" name="prefix" value="{{.OutputPrefix}}" />
+                                    <input type="hidden" name="target_id" value="recent-completed-output-{{idSafe .ExecutionArn}}" />
+                                    <button type="submit" class="btn btn-outline btn-xs">
+                                        List Output Files
+                                    </button>
+                                    {{if .OutputManifestKey}}
+                                    <a class="btn btn-outline btn-xs"
+                                       href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
+                                        Download Manifest
+                                    </a>
+                                    {{end}}
+                                    <span data-show="$s3_prefix_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
+                                        <span class="loading loading-spinner loading-xs"></span>
+                                        Loading...
+                                    </span>
+                                </form>
+                                <div id="recent-completed-output-{{idSafe .ExecutionArn}}" class="mt-2"></div>
+                            </div>
+                            {{end}}
+                        </div>
+                    </details>
                     {{end}}
-                </details>
-                {{end}}
+                </div>
             </div>
         </details>
         {{end}}
     {{else}}
-    <div class="p-4 text-sm text-base-content/60">No completed executions in the last 15 minutes.</div>
+    <div class="p-8 text-center text-sm text-base-content/60">No completed executions in the last 15 minutes.</div>
     {{end}}
 </div>
 {{end}}
@@ -157,11 +163,11 @@
     <summary class="collapse-title flex items-start justify-between gap-3">
         <div class="min-w-0">
             <div class="text-sm font-semibold">{{.StateMachine}}</div>
-            <div class="text-xs text-base-content/60 break-all">
+            <div class="text-xs text-base-content/60 break-words">
                 <span class="badge badge-ghost badge-sm mr-2">{{.Env}}</span>
                 {{.ExecutionName}} · {{.StartTime}}
             </div>
-            <div class="text-xs text-base-content/60 break-all">
+            <div class="text-xs text-base-content/60 break-words">
                 {{.Bucket}}/{{.Key}} · Index {{.Index}}
             </div>
         </div>
@@ -233,34 +239,32 @@
 {{end}}
 
 {{define "state-machines-list"}}
-<ul class="menu menu-sm w-full">
+<div class="divide-y divide-base-200">
     {{if .Items}}
         {{range .Items}}
-        <li class="shadow-sm">
-        <button class="menu-item justify-between w-full text-left h-auto py-3"
+        <button class="w-full text-left p-4 hover:bg-base-200/50 transition-colors"
             data-show="($smEnv == 'all' || $smEnv == '{{.Env}}' || $smEnv == '{{.BaseEnv}}') && el.innerText.toLowerCase().includes($smSearch.toLowerCase())"
             data-on:click="$selectedSm = '{{.Arn}}'; @get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}', {openWhenHidden: true, requestCancellation: 'disabled'})"
             data-indicator:sm_exec_loading
             data-class="{
-                'btn-active': $selectedSm == '{{.Arn}}',
-                'ring-2': $selectedSm == '{{.Arn}}',
-                'ring-primary/30': $selectedSm == '{{.Arn}}',
+                'bg-primary/10': $selectedSm == '{{.Arn}}',
+                'border-l-4': $selectedSm == '{{.Arn}}',
+                'border-l-primary': $selectedSm == '{{.Arn}}',
                 'font-semibold': $selectedSm == '{{.Arn}}'
             }">
-            <div class="flex items-center justify-between gap-2">
-                <div>
-                    <div class="text-sm font-medium">{{.Name}}</div>
-                    <div class="text-xs text-base-content/60 break-all">{{.Arn}}</div>
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                    <div class="text-sm font-medium mb-1">{{.Name}}</div>
+                    <div class="text-xs text-base-content/60 break-words font-mono">{{.Arn}}</div>
                 </div>
-                <span class="badge badge-ghost badge-sm">{{.Env}}</span>
+                <span class="badge badge-ghost badge-sm shrink-0">{{.Env}}</span>
             </div>
         </button>
-        </li>
         {{end}}
     {{else}}
-    <li class="px-4 py-3 text-sm text-base-content/60">No state machines found.</li>
+    <div class="px-4 py-8 text-center text-sm text-base-content/60">No state machines found.</div>
     {{end}}
-</ul>
+</div>
 {{end}}
 
 {{define "state-machine-executions"}}
@@ -274,133 +278,147 @@
 </div>
 {{end}}
 
+{{define "state-machine-executions-loading"}}
+<div class="p-8 text-center text-sm text-base-content/60">
+    <span class="loading loading-spinner loading-lg text-primary"></span>
+    <div class="mt-3">Loading executions...</div>
+</div>
+{{end}}
+
 {{define "state-machine-executions-rows"}}
     {{if .Executions}}
         {{range .Executions}}
-        <details class="collapse collapse-arrow border border-base-200 bg-base-100/90">
-            <summary class="collapse-title text-xs font-medium">
-                <span class="font-mono break-all">{{.Name}}</span>
-                <span class="badge badge-ghost badge-xs ml-2">{{.Status}}</span>
-                {{if .StartTime}}<span class="ml-2 text-base-content/60">{{.StartTime}}</span>{{end}}
-                {{if .StopTime}}<span class="ml-2 text-base-content/40">→ {{.StopTime}}</span>{{end}}
-            </summary>
-            <div class="collapse-content space-y-3">
-                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/60">
-                    <div>
-                        Start: {{.StartTime}}
-                        {{if .StopTime}}<span class="ml-2">Stop: {{.StopTime}}</span>{{end}}
-                        {{if .Duration}}<span class="ml-2">Duration: {{.Duration}}</span>{{end}}
-                    </div>
-                    <div>
-                        {{template "states-viewer-link" (dict "Env" .Env "ExecutionArn" .Arn)}}
-                    </div>
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-lg mb-2">
+            <summary class="collapse-title min-h-0 py-4 cursor-pointer hover:bg-base-200/50 transition-colors">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <span class="font-mono break-words font-semibold">{{.Name}}</span>
+                    <span class="badge badge-ghost badge-xs">{{.Status}}</span>
+                    {{if .StartTime}}<span class="text-base-content/60">{{.StartTime}}</span>{{end}}
+                    {{if .StopTime}}<span class="text-base-content/40">→ {{.StopTime}}</span>{{end}}
+                    {{if .Duration}}<span class="text-base-content/60">{{.Duration}}</span>{{end}}
                 </div>
-
-                {{if or .InputBucket .OutputPrefix}}
-                <details class="collapse collapse-arrow border border-base-200 bg-base-100/80">
-                    <summary class="collapse-title text-xs font-medium">Input / Output Files</summary>
-                    {{if .InputBucket}}
-                    <div class="collapse-content space-y-2 text-xs text-base-content/60">
-                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
-                            Input: {{.InputBucket}}/{{.InputKey}}
-                            {{if .InputSize}}<span class="ml-2">({{.InputSize}})</span>{{end}}
+            </summary>
+            <div class="collapse-content pb-4 bg-base-200/20">
+                <div class="space-y-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/60 bg-base-200/50 rounded-lg p-3">
+                        <div>
+                            <span class="font-semibold">Start:</span> {{.StartTime}}
+                            {{if .StopTime}}<span class="ml-3"><span class="font-semibold">Stop:</span> {{.StopTime}}</span>{{end}}
+                            {{if .Duration}}<span class="ml-3"><span class="font-semibold">Duration:</span> {{.Duration}}</span>{{end}}
                         </div>
-                        <div class="flex flex-wrap gap-2">
-                            <a class="btn btn-outline btn-xs"
-                               href="/api/s3-download?env={{.Env}}&bucket={{.InputBucket}}&key={{.InputKey}}">
-                                Download Input
-                            </a>
-                            <form class="flex flex-wrap items-center gap-2"
-                                  data-on:submit="@get('/api/s3-search', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
-                                  data-indicator:s3_search_loading>
-                                <input type="hidden" name="env" value="{{.Env}}" />
-                                <input type="hidden" name="bucket" value="{{.InputBucket}}" />
-                                <input type="hidden" name="key" value="{{.InputKey}}" />
-                                <input type="hidden" name="target_id" value="s3-search-results-{{idSafe .Arn}}" />
-                                <input name="query" type="text" placeholder="Search in JSON..."
-                                    class="input input-bordered input-xs w-44" />
-                                <button type="submit"
-                                    class="btn btn-primary btn-xs">
-                                    Search
-                                </button>
-                                <span data-show="$s3_search_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
-                                    <span class="loading loading-spinner loading-xs"></span>
-                                    Searching...
-                                </span>
-                            </form>
+                        <div>
+                            {{template "states-viewer-link" (dict "Env" .Env "ExecutionArn" .Arn)}}
                         </div>
-                        <div id="s3-search-results-{{idSafe .Arn}}" class="mt-2"></div>
                     </div>
-                    {{end}}
 
-                    {{if .OutputPrefix}}
-                    <div class="collapse-content space-y-2 text-xs text-base-content/60">
-                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
-                            Output Prefix: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputPrefix}}
-                        </div>
-                        {{if .OutputManifestKey}}
-                        <div class="break-all">
-                            Manifest: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputManifestKey}}
-                            <a class="link link-primary ml-2" href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
-                                Download
-                            </a>
-                        </div>
-                        {{end}}
-                        <form class="flex flex-wrap items-center gap-2"
-                              data-on:submit="@get('/api/s3-prefix-list', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
-                              data-indicator:s3_prefix_loading>
-                            <input type="hidden" name="env" value="{{.Env}}" />
-                            <input type="hidden" name="bucket" value="{{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}" />
-                            <input type="hidden" name="prefix" value="{{.OutputPrefix}}" />
-                            <input type="hidden" name="target_id" value="s3-prefix-results-{{idSafe .Arn}}" />
-                            <button type="submit" class="btn btn-outline btn-xs">
-                                List Output Files
-                            </button>
-                            {{if .OutputManifestKey}}
-                            <a class="btn btn-outline btn-xs"
-                               href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
-                                Download Manifest
-                            </a>
+                    {{if or .InputBucket .OutputPrefix}}
+                    <details class="collapse collapse-arrow border border-base-200 rounded-lg bg-base-100">
+                        <summary class="collapse-title text-xs font-medium min-h-0 py-3">Input / Output Files</summary>
+                        <div class="collapse-content space-y-3 pb-3">
+                            {{if .InputBucket}}
+                            <div class="space-y-2 text-xs text-base-content/60">
+                                <div class="break-words font-mono text-[11px] leading-snug rounded-lg bg-base-200/70 px-3 py-2">
+                                    Input: {{.InputBucket}}/{{.InputKey}}
+                                    {{if .InputSize}}<span class="ml-2">({{.InputSize}})</span>{{end}}
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <a class="btn btn-outline btn-xs"
+                                       href="/api/s3-download?env={{.Env}}&bucket={{.InputBucket}}&key={{.InputKey}}">
+                                        Download Input
+                                    </a>
+                                    <form class="flex flex-wrap items-center gap-2"
+                                          data-on:submit="@get('/api/s3-search', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
+                                          data-indicator:s3_search_loading>
+                                        <input type="hidden" name="env" value="{{.Env}}" />
+                                        <input type="hidden" name="bucket" value="{{.InputBucket}}" />
+                                        <input type="hidden" name="key" value="{{.InputKey}}" />
+                                        <input type="hidden" name="target_id" value="s3-search-results-{{idSafe .Arn}}" />
+                                        <input name="query" type="text" placeholder="Search in JSON..."
+                                            class="input input-bordered input-xs w-44" />
+                                        <button type="submit"
+                                            class="btn btn-primary btn-xs">
+                                            Search
+                                        </button>
+                                        <span data-show="$s3_search_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
+                                            <span class="loading loading-spinner loading-xs"></span>
+                                            Searching...
+                                        </span>
+                                    </form>
+                                </div>
+                                <div id="s3-search-results-{{idSafe .Arn}}" class="mt-2"></div>
+                            </div>
                             {{end}}
-                            <span data-show="$s3_prefix_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
-                                <span class="loading loading-spinner loading-xs"></span>
-                                Loading...
-                            </span>
-                        </form>
-                        <div id="s3-prefix-results-{{idSafe .Arn}}" class="mt-2"></div>
-                    </div>
+
+                            {{if .OutputPrefix}}
+                            <div class="space-y-2 text-xs text-base-content/60">
+                                <div class="break-words font-mono text-[11px] leading-snug rounded-lg bg-base-200/70 px-3 py-2">
+                                    Output Prefix: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputPrefix}}
+                                </div>
+                                {{if .OutputManifestKey}}
+                                <div class="break-words">
+                                    Manifest: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputManifestKey}}
+                                    <a class="link link-primary ml-2" href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
+                                        Download
+                                    </a>
+                                </div>
+                                {{end}}
+                                <form class="flex flex-wrap items-center gap-2"
+                                      data-on:submit="@get('/api/s3-prefix-list', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
+                                      data-indicator:s3_prefix_loading>
+                                    <input type="hidden" name="env" value="{{.Env}}" />
+                                    <input type="hidden" name="bucket" value="{{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}" />
+                                    <input type="hidden" name="prefix" value="{{.OutputPrefix}}" />
+                                    <input type="hidden" name="target_id" value="s3-prefix-results-{{idSafe .Arn}}" />
+                                    <button type="submit" class="btn btn-outline btn-xs">
+                                        List Output Files
+                                    </button>
+                                    {{if .OutputManifestKey}}
+                                    <a class="btn btn-outline btn-xs"
+                                       href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
+                                        Download Manifest
+                                    </a>
+                                    {{end}}
+                                    <span data-show="$s3_prefix_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
+                                        <span class="loading loading-spinner loading-xs"></span>
+                                        Loading...
+                                    </span>
+                                </form>
+                                <div id="s3-prefix-results-{{idSafe .Arn}}" class="mt-2"></div>
+                            </div>
+                            {{end}}
+                        </div>
+                    </details>
                     {{end}}
-                </details>
-                {{end}}
+                </div>
             </div>
         </details>
         {{end}}
     {{else}}
-    <div class="p-4 text-sm text-base-content/60">No executions found.</div>
+    <div class="p-8 text-center text-sm text-base-content/60">No executions found.</div>
     {{end}}
 {{end}}
 
 {{define "state-machine-executions-footer"}}
     {{if and .Env .Arn}}
         {{if .HasMore}}
-        <div class="p-3">
+        <div class="p-3 border-t border-base-200">
             <button type="button" class="btn btn-outline btn-xs"
                 data-indicator:sm_exec_loading
-                data-class="{'btn-disabled pointer-events-none opacity-60': $sm_exec_loading}"
+                data-class="{'btn-disabled': $sm_exec_loading}"
                 data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}&append=1&offset={{.Count}}', {openWhenHidden: true, requestCancellation: 'disabled'})">
-                Load more
-            </button>
-            <span class="ml-2 inline-flex items-center gap-1 text-[11px] text-base-content/60">
+                <span data-show="!$sm_exec_loading">Load more</span>
                 <span data-show="$sm_exec_loading" class="inline-flex items-center gap-1" style="display:none">
                     <span class="loading loading-spinner loading-xs"></span>
                     Loading...
                 </span>
-                <span data-show="!$sm_exec_loading">Showing {{.Count}}</span>
+            </button>
+            <span class="ml-2 text-[11px] text-base-content/60">
+                Showing {{.Count}}
             </span>
         </div>
         {{else}}
-        <div class="p-3 text-[11px] text-base-content/50">
-            Showing {{.Count}}
+        <div class="p-3 text-[11px] text-base-content/50 border-t border-base-200">
+            Showing all {{.Count}} executions
         </div>
         {{end}}
     {{end}}
@@ -423,7 +441,7 @@
             {{range .Matches}}
             <tr class="hover">
                 <td class="font-mono">{{.Index}}</td>
-                <td class="font-mono break-all">{{.Record}}</td>
+                <td class="font-mono break-words">{{.Record}}</td>
             </tr>
             {{end}}
         </tbody>
@@ -453,7 +471,7 @@
         <tbody class="divide-y divide-base-200">
             {{range .Items}}
             <tr class="hover">
-                <td class="font-mono break-all">{{.Key}}</td>
+                <td class="font-mono break-words">{{.Key}}</td>
                 <td>{{.Size}}</td>
                 <td>{{.LastModified}}</td>
                 <td>
@@ -494,7 +512,7 @@
 <div class="flex flex-wrap items-start justify-between gap-3">
     <div class="min-w-0">
         <div class="text-sm font-semibold">JSON Preview</div>
-        <div class="text-xs text-base-content/60 break-all">{{.Bucket}}/{{.Key}}</div>
+        <div class="text-xs text-base-content/60 break-words">{{.Bucket}}/{{.Key}}</div>
     </div>
     <div class="flex items-center gap-2">
         <a class="btn btn-outline btn-xs"
@@ -536,20 +554,11 @@
                 <th class="w-20">States</th>
             </tr>
         </thead>
-        <tbody class="divide-y divide-base-200"
-            data-effect="
-                const env = ($failuresEnv || 'all');
-                const q = ($failuresSearch || '').toLowerCase().trim();
-                for (const row of el.querySelectorAll('tr[data-env]')) {
-                    const rowEnv = row.dataset.env || '';
-                    const baseEnv = rowEnv.split(':')[0] || rowEnv;
-                    const envMatch = env === 'all' || env === baseEnv;
-                    const textMatch = !q || row.innerText.toLowerCase().includes(q);
-                    row.hidden = !(envMatch && textMatch);
-                }
-            ">
+        <tbody class="divide-y divide-base-200">
             {{range .Failures}}
-            <tr class="hover{{if .New}} flash-new{{end}}" data-env="{{.Env}}">
+            <tr class="hover{{if .New}} flash-new{{end}}"
+                data-env="{{.Env}}"
+                data-show="($failuresEnv == 'all' || $failuresEnv == '{{.Env}}'.split(':')[0]) && (($failuresSearch || '').trim() == '' || el.innerText.toLowerCase().includes($failuresSearch.toLowerCase()))">
                 <td>
                     <span class="badge badge-ghost badge-sm">
                         {{.Env}}
@@ -585,9 +594,9 @@
 <div class="flex flex-wrap items-start justify-between gap-3">
     <div class="min-w-0">
         <div class="text-sm font-semibold">Execution States</div>
-        <div class="text-xs text-base-content/60 break-all">{{.ExecutionArn}}</div>
+        <div class="text-xs text-base-content/60 break-words">{{.ExecutionArn}}</div>
         {{if .StateMachine}}
-        <div class="text-xs text-base-content/60 break-all">{{.StateMachine}}</div>
+        <div class="text-xs text-base-content/60 break-words">{{.StateMachine}}</div>
         {{end}}
     </div>
     <div class="flex items-center gap-2">

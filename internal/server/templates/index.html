@@ -1,301 +1,248 @@
 {{define "content"}}
-<div class="space-y-6" 
-     data-signals="{ json_modal_open: false, states_modal_open: false, active_jobs: [], recent_failures: [], selectedSm: '', smEnv: 'all', smSearch: '', failuresEnv: 'all', failuresSearch: '', recordEnv: 'all', recordSm: '', sm_exec_loading: false, s3_search_loading: false, s3_prefix_loading: false }"
+<div class="space-y-4"
+     data-signals="{
+         json_modal_open: false,
+         states_modal_open: false,
+         selectedSm: '',
+         smEnv: 'all',
+         failuresEnv: 'all',
+         failuresSearch: '',
+         recordEnv: 'all',
+         recordSm: '',
+         sm_exec_loading: false,
+         s3_search_loading: false,
+         s3_prefix_loading: false,
+         active_jobs_count: 0,
+         recent_failures_count: 0,
+         recent_completed_count: 0
+     }"
      data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">
-    
-    <!-- Active Executions Section -->
-    <section id="active-executions-section">
-        <div class="card bg-base-100/60 border border-base-200">
-            <div class="card-body">
-                <div class="flex flex-wrap items-center gap-2">
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                            <h2 class="text-xl font-semibold tracking-tight">Active Executions</h2>
-                            <span class="badge badge-ghost badge-sm">Live</span>
-                        </div>
-                        <div class="text-xs text-base-content/60">Streaming updates from running workflows.</div>
-                    </div>
-                    <div class="ml-auto flex items-center gap-2 text-xs text-base-content/60">
-                        <span class="relative flex h-2.5 w-2.5">
-                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-60"></span>
-                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-success"></span>
-                        </span>
-                        <span>Live updates</span>
-                    </div>
+
+    <!-- Active Executions -->
+    <section>
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold">Active Executions</h2>
+                <div class="badge badge-success badge-sm gap-1.5">
+                    <span class="relative flex h-1.5 w-1.5">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success-content opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-success-content"></span>
+                    </span>
+                    Live
                 </div>
             </div>
         </div>
-
-        <div class="card bg-base-100 shadow-sm border border-base-200 mt-4">
+        <div class="card bg-base-100 shadow-sm border border-base-300">
             <div id="active-jobs-list" class="overflow-x-auto">
                 {{if .ActiveJobsError}}
-                <div class="p-6 text-sm text-error">
-                    Failed to load active executions. {{.ActiveJobsError}}
-                </div>
-                {{else if .ActiveJobs}}
-                {{template "active-jobs" (dict "Jobs" .ActiveJobs "Joke" .ActiveJobsJoke)}}
+                <div class="p-4 text-sm text-error">Failed to load: {{.ActiveJobsError}}</div>
                 {{else}}
-                <div class="p-8 text-center text-base-content/60">
-                    Polling for active jobs...
-                </div>
+                {{template "active-jobs" (dict "Jobs" .ActiveJobs "Joke" .ActiveJobsJoke)}}
                 {{end}}
             </div>
         </div>
     </section>
 
-    <!-- Recently Completed Section -->
-    <section id="recent-completed-section">
-        <div class="card bg-base-100/60 border border-base-200">
-            <div class="card-body">
-                <div class="flex flex-wrap items-center gap-2">
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                                <h2 class="text-xl font-semibold tracking-tight">Recently Completed</h2>
-                                <span class="badge badge-ghost badge-sm">Last 15m</span>
-                            </div>
-                            <div class="text-xs text-base-content/60">Most recent successful executions.</div>
-                        </div>
-                    </div>
+    <!-- Recently Completed -->
+    <section>
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold">Recently Completed</h2>
+                <span class="badge badge-sm badge-ghost">Last 15m</span>
             </div>
         </div>
-
-        <div class="card bg-base-100 shadow-sm border border-base-200 mt-4">
+        <div class="card bg-base-100 shadow-sm border border-base-300">
             <div id="recent-completed-list" class="overflow-x-auto">
                 {{if .RecentCompletedError}}
-                <div class="p-6 text-sm text-error">
-                    Failed to load completed executions. {{.RecentCompletedError}}
-                </div>
-                {{else if .RecentCompleted}}
-                {{template "recent-completed" (dict "Jobs" .RecentCompleted)}}
+                <div class="p-4 text-sm text-error">Failed to load: {{.RecentCompletedError}}</div>
                 {{else}}
-                <div class="p-8 text-center text-base-content/60">
-                    Looking for recently completed executions...
-                </div>
+                {{template "recent-completed" (dict "Jobs" .RecentCompleted)}}
                 {{end}}
             </div>
         </div>
     </section>
 
-    <!-- Recent Failures Section -->
-    <section id="recent-failures-section">
-        <div class="card bg-base-100/60 border border-base-200">
-            <div class="card-body">
-                <div class="flex flex-wrap items-center gap-2">
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                            <h2 class="text-xl font-semibold tracking-tight">Recent Failures</h2>
-                            <span class="badge badge-ghost badge-sm">Last 24h</span>
-                        </div>
-                        <div class="text-xs text-base-content/60">Most recent failed executions across environments.</div>
-                    </div>
-                    <div class="ml-auto flex flex-wrap items-center gap-2">
-                        <div class="join">
-                            <input id="failures-search"
-                                type="text"
-                                class="input input-bordered input-sm join-item w-44 md:w-56"
-                                placeholder="Search failures..."
-                                data-bind="failuresSearch"
-                                data-on:input="$failuresSearch = evt.target.value" />
-                            <select id="failures-env"
-                                class="select select-bordered select-sm join-item w-28"
-                                data-bind="failuresEnv"
-                                data-on:change="$failuresEnv = evt.target.value">
-                                <option value="all">All</option>
-                                <option value="dev">Dev</option>
-                                <option value="qa">QA</option>
-                                <option value="prod">Prod</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
+    <!-- Recent Failures -->
+    <section>
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold">Recent Failures</h2>
+                <span class="badge badge-sm badge-ghost">Last 24h</span>
+            </div>
+            <div class="join join-horizontal">
+                <input id="failures-search" aria-label="Search failures"
+                    type="text"
+                    class="input input-sm input-bordered join-item w-44"
+                    placeholder="Search..."
+                    data-bind="failuresSearch" />
+                <select id="failures-env" aria-label="Filter environment"
+                    class="select select-sm select-bordered join-item"
+                    data-bind="failuresEnv">
+                    <option value="all">All</option>
+                    <option value="dev">Dev</option>
+                    <option value="qa">QA</option>
+                    <option value="prod">Prod</option>
+                </select>
             </div>
         </div>
-        <div id="recent-failures-list" class="card bg-base-100 shadow-sm border border-base-200 h-[320px] min-h-[320px] max-h-[320px] overflow-y-auto mt-4">
+        <div id="recent-failures-list" class="card bg-base-100 shadow-sm border border-base-300 max-h-[40vh] overflow-y-auto">
             {{if .RecentFailuresError}}
-            <div class="p-6 text-sm text-error">
-                Failed to load recent failures. {{.RecentFailuresError}}
-            </div>
-            {{else if .RecentFailures}}
-            {{template "recent-failures" (dict "Failures" .RecentFailures)}}
+            <div class="p-4 text-sm text-error">Failed to load: {{.RecentFailuresError}}</div>
             {{else}}
-            <div class="p-8 text-center text-base-content/60">
-                Loading recent failures...
-            </div>
+            {{template "recent-failures" (dict "Failures" .RecentFailures)}}
             {{end}}
         </div>
     </section>
 
-    <!-- State Machines Section -->
-    <section id="state-machines-section">
-        <div class="card bg-base-100/60 border border-base-200">
-            <div class="card-body">
-                <div class="flex flex-wrap items-center gap-2">
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                            <h2 class="text-xl font-semibold tracking-tight">State Machines</h2>
-                            <span class="badge badge-ghost badge-sm">Last 10 execs</span>
-                        </div>
-                        <div class="text-xs text-base-content/60">Click a state machine to load recent executions.</div>
-                    </div>
-                    <div class="ml-auto flex flex-wrap items-center gap-2">
-                        <div class="join">
-                            <input id="sm-search"
-                                type="text"
-                                class="input input-bordered input-sm join-item w-44 md:w-64"
-                                placeholder="Search state machines..."
-                                data-bind="smSearch" />
-                            <select id="sm-env"
-                                class="select select-bordered select-sm join-item w-28"
-                                data-bind="smEnv">
-                                <option value="all">All</option>
-                                <option value="dev">Dev</option>
-                                <option value="qa">QA</option>
-                                <option value="prod">Prod</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
+    <!-- State Machines -->
+    <section>
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold">State Machines</h2>
+                <span class="badge badge-sm badge-ghost">Last 10 executions</span>
+            </div>
+            <div class="join join-horizontal">
+                <select id="sm-env" aria-label="Filter environment"
+                    class="select select-sm select-bordered join-item"
+                    data-bind="smEnv"
+                    data-on:change="$selectedSm = ''">
+                    <option value="all">All Envs</option>
+                    <option value="dev">Dev</option>
+                    <option value="qa">QA</option>
+                    <option value="prod">Prod</option>
+                </select>
+                <select id="sm-select" aria-label="Select state machine"
+                    class="select select-sm select-bordered join-item min-w-[250px]"
+                    data-bind="selectedSm"
+                    data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; @get('/api/state-machine-executions?env=' + opt.dataset.env + '&arn=' + evt.target.value, {openWhenHidden: true, requestCancellation: 'disabled'}) }"
+                    data-indicator:sm_exec_loading
+                    data-effect="
+                        for (const opt of el.options) {
+                            if (!opt.dataset.baseEnv) continue;
+                            const shouldShow = ($smEnv === 'all' || $smEnv === opt.dataset.baseEnv);
+                            opt.style.display = shouldShow ? '' : 'none';
+                        }
+                        if (el.selectedOptions[0]?.style.display === 'none') {
+                            el.value = '';
+                        }
+                    ">
+                    <option value="">Select a state machine...</option>
+                    {{if .StateMachines}}
+                    {{range .StateMachines}}
+                    <option value="{{.Arn}}"
+                            data-env="{{.Env}}"
+                            data-base-env="{{.BaseEnv}}">
+                        {{.Name}} ({{.Env}})
+                    </option>
+                    {{end}}
+                    {{else}}
+                    <option disabled>No state machines found</option>
+                    {{end}}
+                </select>
             </div>
         </div>
-
-        <div class="grid grid-cols-1 gap-2 lg:grid-cols-2 mt-2">
-            <div id="state-machines-list" class="card bg-base-100 shadow-sm border border-base-200 min-h-[240px] max-h-[240px] overflow-y-auto">
-                {{if .StateMachinesError}}
-                <div class="p-4 text-sm text-error">
-                    Failed to load state machines. {{.StateMachinesError}}
-                </div>
-                {{else if .StateMachines}}
-                {{template "state-machines-list" (dict "Items" .StateMachines)}}
-                {{else}}
-                <div class="p-4 text-sm text-base-content/60">
-                    Waiting for state machines...
-                </div>
-                {{end}}
-            </div>
-            <div id="state-machine-executions" class="relative card bg-base-100 shadow-sm border border-base-200 min-h-[240px] max-h-[240px] overflow-y-auto">
-                <div class="absolute inset-0 flex items-center justify-center bg-base-100/80 backdrop-blur-sm"
-                    data-show="$sm_exec_loading" style="display: none">
-                    <div class="flex items-center gap-2 text-sm text-base-content/60">
-                        <span class="loading loading-spinner loading-sm"></span>
-                        <span>Loading executions...</span>
-                    </div>
-                </div>
-                <div id="state-machine-executions-content" class="p-4 text-sm text-base-content/60">
-                    Select a state machine to view recent executions.
-                </div>
+        <div id="state-machine-executions" class="card bg-base-100 shadow-sm border border-base-300 max-h-[60vh] overflow-y-auto">
+            <div id="state-machine-executions-content" class="p-8 text-center text-sm text-base-content/60">
+                Select a state machine to view executions
             </div>
         </div>
     </section>
 
-    <!-- Record Tracer Section -->
-    <section id="record-tracer-section">
-        <div class="card bg-base-100/60 border border-base-200">
-            <div class="card-body">
-                <div class="flex flex-wrap items-center gap-2">
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                            <h2 class="text-xl font-semibold tracking-tight">Record Tracer</h2>
-                            <span class="badge badge-ghost badge-sm">Search</span>
-                        </div>
-                        <div class="text-xs text-base-content/60">Locate records by email across environments.</div>
-                    </div>
-                </div>
-                <form class="mt-4 flex flex-col gap-2 md:flex-row md:items-center"
+    <!-- Record Tracer -->
+    <section>
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold">Record Tracer</h2>
+            </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm border border-base-300">
+            <div class="card-body p-4">
+                <form class="flex flex-wrap gap-2"
                       data-on:submit="@get('/api/record-search', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})">
-                    <input id="email_address" name="email_address" type="text"
-                        class="input input-bordered input-sm w-full md:flex-1"
+                    <input id="email_address" name="email_address" type="text" aria-label="Email address"
+                        class="input input-sm input-bordered flex-1 min-w-[200px]"
                         placeholder="Email address" />
-                    <select id="env" name="env" class="select select-bordered select-sm w-full md:w-36"
+                    <select id="env" name="env" aria-label="Environment" class="select select-sm select-bordered"
                         data-bind="recordEnv"
-                        data-on:change="$recordEnv = evt.target.value; $recordSm = ''">
+                        data-on:change="$recordSm = ''">
                         <option value="all">All envs</option>
                         <option value="dev">Dev</option>
                         <option value="qa">QA</option>
                         <option value="prod">Prod</option>
                     </select>
-                    <select id="state_machine" name="state_machine"
-                        class="select select-bordered select-sm w-full md:w-64"
+                    <select id="state_machine" name="state_machine" aria-label="State machine"
+                        class="select select-sm select-bordered"
                         data-bind="recordSm"
-                        data-on:change="$recordSm = evt.target.value"
                         data-effect="
-                            const env = ($recordEnv || 'all');
-                            let hasVisible = false;
-                            for (const opt of el.querySelectorAll('option[data-env]')) {
-                                const optEnv = opt.dataset.env || '';
-                                const optBase = opt.dataset.baseEnv || '';
-                                const visible = env === 'all' || env === optEnv || env === optBase;
-                                opt.hidden = !visible;
-                                if (visible) hasVisible = true;
+                            for (const opt of el.options) {
+                                if (!opt.dataset.baseEnv) continue;
+                                opt.style.display = ($recordEnv === 'all' || $recordEnv === opt.dataset.baseEnv) ? '' : 'none';
                             }
-                            const selected = el.selectedOptions && el.selectedOptions[0];
-                            if (selected && selected.hidden) {
+                            if (el.selectedOptions[0]?.style.display === 'none') {
                                 el.value = '';
                             }
-                            if (!hasVisible) el.value = '';
                         ">
                         <option value="">All state machines</option>
                         {{range .StateMachines}}
-                        <option value="{{.Arn}}" data-env="{{.Env}}" data-base-env="{{.BaseEnv}}">
+                        <option value="{{.Arn}}"
+                                data-env="{{.Env}}"
+                                data-base-env="{{.BaseEnv}}">
                             {{.Name}} ({{.Env}})
                         </option>
                         {{end}}
                     </select>
                     <input id="start_date" name="start_date" type="date"
-                        class="input input-bordered input-sm w-full md:w-40"
-                        placeholder="Start date" />
+                        class="input input-sm input-bordered"
+                        placeholder="Start" />
                     <input id="end_date" name="end_date" type="date"
-                        class="input input-bordered input-sm w-full md:w-40"
-                        placeholder="End date" />
-                    <div class="flex gap-2">
-                        <button type="submit" class="btn btn-primary btn-sm">Search</button>
-                        <button type="button" class="btn btn-outline btn-sm"
-                            data-on:click="@get('/api/record-search-cancel?key=' + $recordSearchKey)">
-                            Stop
-                        </button>
-                    </div>
+                        class="input input-sm input-bordered"
+                        placeholder="End" />
+                    <button type="submit" class="btn btn-sm btn-primary">Search</button>
+                    <button type="button" class="btn btn-sm btn-outline"
+                        data-on:click="@get('/api/record-search-cancel?key=' + $recordSearchKey)">
+                        Stop
+                    </button>
                 </form>
             </div>
         </div>
-
-        <div id="record-search-results" class="mt-2 card bg-base-100 shadow-sm border border-base-200">
+        <div id="record-search-results" class="card bg-base-100 shadow-sm border border-base-300 mt-4">
             <div class="p-4 text-sm text-base-content/60">
-                Enter an email address to search recent executions.
+                Enter an email to search
             </div>
         </div>
     </section>
 
-    <div class="modal" data-class="{'modal-open': $json_modal_open}">
-        <div class="modal-box max-w-5xl relative">
-            <button type="button"
-                class="btn btn-ghost btn-sm btn-circle absolute right-2 top-2"
-                aria-label="Close"
-                data-on:click="$json_modal_open = false">
-                x
-            </button>
+    <!-- Modals -->
+    <dialog class="modal" data-class="{'modal-open': $json_modal_open}">
+        <div class="modal-box max-w-5xl">
+            <form method="dialog">
+                <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                    aria-label="Close" data-on:click="$json_modal_open = false">✕</button>
+            </form>
+            <h3 class="font-semibold text-lg mb-4">JSON Preview</h3>
             <div id="json-modal-content" class="min-h-[120px]">
-                <div class="p-4 text-sm text-base-content/60">Loading JSON preview...</div>
+                <div class="p-4 text-sm text-base-content/60">Loading...</div>
             </div>
         </div>
-        <div class="modal-backdrop" data-on:click="$json_modal_open = false">
-            <button type="button">close</button>
-        </div>
-    </div>
+        <form method="dialog" class="modal-backdrop">
+            <button data-on:click="$json_modal_open = false">close</button>
+        </form>
+    </dialog>
 
-    <div class="modal" data-class="{'modal-open': $states_modal_open}">
-        <div class="modal-box max-w-5xl relative">
-            <button type="button"
-                class="btn btn-ghost btn-sm btn-circle absolute right-2 top-2"
-                aria-label="Close"
-                data-on:click="$states_modal_open = false">
-                x
-            </button>
+    <dialog class="modal" data-class="{'modal-open': $states_modal_open}">
+        <div class="modal-box max-w-5xl">
+            <form method="dialog">
+                <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                    aria-label="Close" data-on:click="$states_modal_open = false">✕</button>
+            </form>
+            <h3 class="font-semibold text-lg mb-4">Execution States</h3>
             <div id="states-modal-content" class="min-h-[120px]">
-                <div class="p-4 text-sm text-base-content/60">Loading execution states...</div>
+                <div class="p-4 text-sm text-base-content/60">Loading...</div>
             </div>
         </div>
-        <div class="modal-backdrop" data-on:click="$states_modal_open = false">
-            <button type="button">close</button>
-        </div>
-    </div>
+        <form method="dialog" class="modal-backdrop">
+            <button data-on:click="$states_modal_open = false">close</button>
+        </form>
+    </dialog>
 </div>
 {{end}}

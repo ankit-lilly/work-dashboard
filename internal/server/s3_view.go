@@ -49,7 +49,11 @@ func (s *Server) handleS3ViewJSON(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("s3 view head failed", "err", err)
 	}
 
-	if head != nil && head.ContentLength != nil && *head.ContentLength > 2*1024*1024 {
+	maxSize := int64(2 * 1024 * 1024) // Default 2MB
+	if s.cfg != nil && s.cfg.Limits.MaxPreviewFileSize > 0 {
+		maxSize = s.cfg.Limits.MaxPreviewFileSize
+	}
+	if head != nil && head.ContentLength != nil && *head.ContentLength > maxSize {
 		s.render(w, "json_view", map[string]any{
 			"Env":    env,
 			"Bucket": bucket,
@@ -119,23 +123,30 @@ func (s *Server) handleS3PreviewModal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("s3 preview modal head failed", "err", err)
 	}
-	if head != nil && head.ContentLength != nil && *head.ContentLength > 2*1024*1024 {
+	maxSize := int64(2 * 1024 * 1024) // Default 2MB
+	if s.cfg != nil && s.cfg.Limits.MaxPreviewFileSize > 0 {
+		maxSize = s.cfg.Limits.MaxPreviewFileSize
+	}
+	if head != nil && head.ContentLength != nil && *head.ContentLength > maxSize {
 		var buf bytes.Buffer
 		tmpl := s.templateSet("index")
 		if tmpl == nil {
 			return
 		}
-		_ = tmpl.ExecuteTemplate(&buf, "json-modal-content", map[string]any{
+		if err := tmpl.ExecuteTemplate(&buf, "json-modal-content", map[string]any{
 			"Env":    env,
 			"Bucket": bucket,
 			"Key":    key,
 			"Error":  "File too large to preview. Please download.",
-		})
-		sse.PatchElements(
-			buf.String(),
-			datastar.WithSelector("#"+targetID),
-			datastar.WithMode(datastar.ElementPatchModeInner),
-		)
+		}); err != nil {
+			slog.Error("template render failed", "template", "json-modal-content", "error", err)
+		} else {
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#"+targetID),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
 		return
 	}
 
@@ -159,16 +170,19 @@ func (s *Server) handleS3PreviewModal(w http.ResponseWriter, r *http.Request) {
 	if tmpl == nil {
 		return
 	}
-	_ = tmpl.ExecuteTemplate(&buf, "json-modal-content", map[string]any{
+	if err := tmpl.ExecuteTemplate(&buf, "json-modal-content", map[string]any{
 		"Env":         env,
 		"Bucket":      bucket,
 		"Key":         key,
 		"PreviewHTML": template.HTML(previewHTML),
 		"Error":       err,
-	})
-	sse.PatchElements(
-		buf.String(),
-		datastar.WithSelector("#"+targetID),
-		datastar.WithMode(datastar.ElementPatchModeInner),
-	)
+	}); err != nil {
+		slog.Error("template render failed", "template", "json-modal-content", "error", err)
+	} else {
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#"+targetID),
+			datastar.WithMode(datastar.ElementPatchModeInner),
+		)
+	}
 }

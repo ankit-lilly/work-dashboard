@@ -63,16 +63,19 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 		if tmpl == nil {
 			return
 		}
-		_ = tmpl.ExecuteTemplate(&buf, "states-modal-content", executionStatesPayload{
+		if err := tmpl.ExecuteTemplate(&buf, "states-modal-content", executionStatesPayload{
 			Env:          env,
 			ExecutionArn: arn,
 			Error:        "Failed to describe execution.",
-		})
-		sse.PatchElements(
-			buf.String(),
-			datastar.WithSelector("#"+targetID),
-			datastar.WithMode(datastar.ElementPatchModeInner),
-		)
+		}); err != nil {
+			slog.Error("template render failed", "template", "states-modal-content", "error", err)
+		} else {
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#"+targetID),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
 		return
 	}
 
@@ -83,16 +86,19 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 		if tmpl == nil {
 			return
 		}
-		_ = tmpl.ExecuteTemplate(&buf, "states-modal-content", executionStatesPayload{
+		if err := tmpl.ExecuteTemplate(&buf, "states-modal-content", executionStatesPayload{
 			Env:          env,
 			ExecutionArn: arn,
 			Error:        err.Error(),
-		})
-		sse.PatchElements(
-			buf.String(),
-			datastar.WithSelector("#"+targetID),
-			datastar.WithMode(datastar.ElementPatchModeInner),
-		)
+		}); err != nil {
+			slog.Error("template render failed", "template", "states-modal-content", "error", err)
+		} else {
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#"+targetID),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
 		return
 	}
 
@@ -108,12 +114,15 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 	if tmpl == nil {
 		return
 	}
-	_ = tmpl.ExecuteTemplate(&buf, "states-modal-content", payload)
-	sse.PatchElements(
-		buf.String(),
-		datastar.WithSelector("#"+targetID),
-		datastar.WithMode(datastar.ElementPatchModeInner),
-	)
+	if err := tmpl.ExecuteTemplate(&buf, "states-modal-content", payload); err != nil {
+		slog.Error("template render failed", "template", "states-modal-content", "error", err)
+	} else {
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#"+targetID),
+			datastar.WithMode(datastar.ElementPatchModeInner),
+		)
+	}
 }
 
 func (s *Server) buildExecutionStateItems(ctx context.Context, sfnClient *sfn.Client, execArn *string) ([]executionStateItem, error) {

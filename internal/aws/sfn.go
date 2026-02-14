@@ -30,10 +30,6 @@ type execCacheEntry struct {
 	expiresAt time.Time
 }
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 type Execution struct {
 	Env               string
 	Name              string

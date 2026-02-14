@@ -41,8 +41,9 @@ type Server struct {
 	jeffJoke    string
 	jeffJokeAt  time.Time
 
-	searchMu     sync.Mutex
-	searchStates map[string]*searchState
+	searchMu        sync.Mutex
+	searchStates    map[string]*searchState
+	searchStatesTTL time.Duration
 
 	notifyMu            sync.Mutex
 	notifyActiveReady   bool
@@ -67,6 +68,10 @@ func (s *Server) templateSet(name string) *template.Template {
 }
 
 func NewServer(awsManager *aws.ClientManager, staticFS fs.FS, cfg *config.Config) *Server {
+	searchTTL := 10 * time.Minute
+	if cfg != nil && cfg.Limits.SearchStateTTL > 0 {
+		searchTTL = cfg.Limits.SearchStateTTL
+	}
 	s := &Server{
 		awsManager:           awsManager,
 		staticFS:             staticFS,
@@ -74,6 +79,7 @@ func NewServer(awsManager *aws.ClientManager, staticFS fs.FS, cfg *config.Config
 		activeCache:          make(map[string][]aws.Execution),
 		activeCacheAt:        make(map[string]time.Time),
 		searchStates:         make(map[string]*searchState),
+		searchStatesTTL:      searchTTL,
 		seenActive:           make(map[string]time.Time),
 		seenFailures:         make(map[string]time.Time),
 		activeIntervalLogged: make(map[string]time.Duration),
@@ -83,6 +89,7 @@ func NewServer(awsManager *aws.ClientManager, staticFS fs.FS, cfg *config.Config
 	}
 	s.parseTemplates()
 	s.initBroadcasters()
+	s.startSearchStateCleanup()
 	return s
 }
 
@@ -207,4 +214,32 @@ func (s *Server) markNewExecutions(execs []aws.Execution, seen map[string]time.T
 		seen[key] = now
 	}
 	return execs
+}
+
+// startSearchStateCleanup starts a background goroutine to periodically clean up old search states
+func (s *Server) startSearchStateCleanup() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.cleanupOldSearchStates()
+		}
+	}()
+}
+
+// cleanupOldSearchStates removes search states that haven't been accessed within the TTL
+func (s *Server) cleanupOldSearchStates() {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+
+	now := time.Now()
+	for key, state := range s.searchStates {
+		state.mu.Lock()
+		lastActive := state.lastActivity
+		state.mu.Unlock()
+
+		if now.Sub(lastActive) > s.searchStatesTTL {
+			delete(s.searchStates, key)
+		}
+	}
 }

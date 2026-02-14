@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +49,18 @@ type MapRunItem struct {
 	StopTime  string
 }
 
+// sanitizeFilename removes dangerous characters from filenames to prevent header injection
+func sanitizeFilename(filename string) string {
+	// Remove path separators to get just the base filename
+	filename = filepath.Base(filename)
+	// Remove quotes and special characters that could break HTTP headers
+	filename = strings.ReplaceAll(filename, "\"", "")
+	filename = strings.ReplaceAll(filename, "\n", "")
+	filename = strings.ReplaceAll(filename, "\r", "")
+	filename = strings.ReplaceAll(filename, "\\", "")
+	return filename
+}
+
 func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Request) {
 	sse := datastar.NewSSE(w, r)
 	env := strings.TrimSpace(r.URL.Query().Get("env"))
@@ -72,21 +85,23 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Optimistic loading state (skip for append mode to preserve existing rows)
+	// Send loading state immediately (skip for append mode to preserve existing rows)
 	if !appendMode {
 		var buf bytes.Buffer
 		tmpl := s.templateSet("index")
 		if tmpl == nil {
 			return
 		}
-		_ = tmpl.ExecuteTemplate(&buf, "state-machine-executions", map[string]any{
-			"Executions": nil,
-		})
-		sse.PatchElements(
-			buf.String(),
-			datastar.WithSelector("#state-machine-executions-content"),
-			datastar.WithMode(datastar.ElementPatchModeInner),
-		)
+		if err := tmpl.ExecuteTemplate(&buf, "state-machine-executions-loading", nil); err != nil {
+			slog.Error("template render failed", "template", "state-machine-executions-loading", "error", err)
+			// Continue with SSE stream
+		} else {
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#state-machine-executions-content"),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -207,33 +222,39 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		newItems := items[offset:]
 		if len(newItems) > 0 {
 			buf.Reset()
-			_ = tmpl.ExecuteTemplate(&buf, "state-machine-executions-rows", map[string]any{
+			if err := tmpl.ExecuteTemplate(&buf, "state-machine-executions-rows", map[string]any{
 				"Executions": newItems,
-			})
-			sse.PatchElements(
-				buf.String(),
-				datastar.WithSelector("#state-machine-executions-rows"),
-				datastar.WithMode(datastar.ElementPatchModeAppend),
-			)
+			}); err != nil {
+				slog.Error("template render failed", "template", "state-machine-executions-rows", "error", err)
+			} else {
+				sse.PatchElements(
+					buf.String(),
+					datastar.WithSelector("#state-machine-executions-rows"),
+					datastar.WithMode(datastar.ElementPatchModeAppend),
+				)
+			}
 		}
 		buf.Reset()
-		_ = tmpl.ExecuteTemplate(&buf, "state-machine-executions-footer", map[string]any{
+		if err := tmpl.ExecuteTemplate(&buf, "state-machine-executions-footer", map[string]any{
 			"Env":       env,
 			"Arn":       arn,
 			"Count":     count,
 			"CountNext": nextCount,
 			"Total":     total,
 			"HasMore":   hasMore,
-		})
-		sse.PatchElements(
-			buf.String(),
-			datastar.WithSelector("#state-machine-executions-footer"),
-			datastar.WithMode(datastar.ElementPatchModeInner),
-		)
+		}); err != nil {
+			slog.Error("template render failed", "template", "state-machine-executions-footer", "error", err)
+		} else {
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#state-machine-executions-footer"),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
 		return
 	}
 
-	_ = tmpl.ExecuteTemplate(&buf, "state-machine-executions", map[string]any{
+	if err := tmpl.ExecuteTemplate(&buf, "state-machine-executions", map[string]any{
 		"Env":        env,
 		"Arn":        arn,
 		"Executions": items,
@@ -241,13 +262,15 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		"CountNext":  nextCount,
 		"Total":      total,
 		"HasMore":    hasMore,
-	})
-
-	sse.PatchElements(
-		buf.String(),
-		datastar.WithSelector("#state-machine-executions-content"),
-		datastar.WithMode(datastar.ElementPatchModeInner),
-	)
+	}); err != nil {
+		slog.Error("template render failed", "template", "state-machine-executions", "error", err)
+	} else {
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#state-machine-executions-content"),
+			datastar.WithMode(datastar.ElementPatchModeInner),
+		)
+	}
 }
 
 func formatDuration(start, stop *time.Time) string {
@@ -342,8 +365,11 @@ func (s *Server) handleS3Download(w http.ResponseWriter, r *http.Request) {
 	if key != "" {
 		filename = path.Base(key)
 	}
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	io.Copy(w, obj.Body)
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+sanitizeFilename(filename)+"\"")
+	if _, err := io.Copy(w, obj.Body); err != nil {
+		slog.Error("failed to stream S3 object", "error", err)
+		return
+	}
 }
 
 type S3ObjectItem struct {
@@ -413,20 +439,22 @@ func (s *Server) handleS3PrefixList(w http.ResponseWriter, r *http.Request) {
 	if tmpl == nil {
 		return
 	}
-	_ = tmpl.ExecuteTemplate(&buf, "s3-prefix-results", map[string]any{
+	if err := tmpl.ExecuteTemplate(&buf, "s3-prefix-results", map[string]any{
 		"Bucket": bucket,
 		"Prefix": prefix,
 		"Items":  items,
 		"Error":  err,
 		"Target": targetID,
 		"Env":    env,
-	})
-
-	sse.PatchElements(
-		buf.String(),
-		datastar.WithSelector("#"+targetID),
-		datastar.WithMode(datastar.ElementPatchModeOuter),
-	)
+	}); err != nil {
+		slog.Error("template render failed", "template", "s3-prefix-results", "error", err)
+	} else {
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#"+targetID),
+			datastar.WithMode(datastar.ElementPatchModeOuter),
+		)
+	}
 }
 
 func (s *Server) handleS3Search(w http.ResponseWriter, r *http.Request) {
@@ -461,20 +489,22 @@ func (s *Server) handleS3Search(w http.ResponseWriter, r *http.Request) {
 	if tmpl == nil {
 		return
 	}
-	_ = tmpl.ExecuteTemplate(&buf, "s3-search-results", map[string]any{
+	if err := tmpl.ExecuteTemplate(&buf, "s3-search-results", map[string]any{
 		"Query":   query,
 		"Bucket":  bucket,
 		"Key":     key,
 		"Matches": matches,
 		"Error":   err,
 		"Target":  targetID,
-	})
-
-	sse.PatchElements(
-		buf.String(),
-		datastar.WithSelector("#"+targetID),
-		datastar.WithMode(datastar.ElementPatchModeOuter),
-	)
+	}); err != nil {
+		slog.Error("template render failed", "template", "s3-search-results", "error", err)
+	} else {
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#"+targetID),
+			datastar.WithMode(datastar.ElementPatchModeOuter),
+		)
+	}
 }
 
 func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
@@ -513,21 +543,28 @@ func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("s3 preview head failed", "err", err)
 	}
-	if head != nil && head.ContentLength != nil && *head.ContentLength > 2*1024*1024 {
+	maxSize := int64(2 * 1024 * 1024) // Default 2MB
+	if s.cfg != nil && s.cfg.Limits.MaxPreviewFileSize > 0 {
+		maxSize = s.cfg.Limits.MaxPreviewFileSize
+	}
+	if head != nil && head.ContentLength != nil && *head.ContentLength > maxSize {
 		var buf bytes.Buffer
 		tmpl := s.templateSet("index")
 		if tmpl == nil {
 			return
 		}
-		_ = tmpl.ExecuteTemplate(&buf, "s3-preview", map[string]any{
+		if err := tmpl.ExecuteTemplate(&buf, "s3-preview", map[string]any{
 			"Target": targetID,
 			"Error":  "File too large to preview. Please download.",
-		})
-		sse.PatchElements(
-			buf.String(),
-			datastar.WithSelector("#"+targetID),
-			datastar.WithMode(datastar.ElementPatchModeOuter),
-		)
+		}); err != nil {
+			slog.Error("template render failed", "template", "s3-preview", "error", err)
+		} else {
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#"+targetID),
+				datastar.WithMode(datastar.ElementPatchModeOuter),
+			)
+		}
 		return
 	}
 
@@ -551,16 +588,19 @@ func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
 	if tmpl == nil {
 		return
 	}
-	_ = tmpl.ExecuteTemplate(&buf, "s3-preview", map[string]any{
+	if err := tmpl.ExecuteTemplate(&buf, "s3-preview", map[string]any{
 		"Target":      targetID,
 		"PreviewHTML": template.HTML(previewHTML),
 		"Error":       err,
-	})
-	sse.PatchElements(
-		buf.String(),
-		datastar.WithSelector("#"+targetID),
-		datastar.WithMode(datastar.ElementPatchModeOuter),
-	)
+	}); err != nil {
+		slog.Error("template render failed", "template", "s3-preview", "error", err)
+	} else {
+		sse.PatchElements(
+			buf.String(),
+			datastar.WithSelector("#"+targetID),
+			datastar.WithMode(datastar.ElementPatchModeOuter),
+		)
+	}
 }
 
 func buildPrettyPreview(r io.Reader, matchIndex int) (string, error) {
@@ -590,7 +630,8 @@ func parseNDJSON(data []byte) []any {
 	var out []any
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 2*1024*1024)
+	maxLineSize := 2 * 1024 * 1024 // Default 2MB
+	scanner.Buffer(buf, maxLineSize)
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {

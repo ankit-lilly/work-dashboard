@@ -3,36 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Viewer</title>
+    <title>Work Dashboard</title>
     <link rel="stylesheet" href="/static/css/app.css">
     <script type="module" src="/static/js/datastar.js"></script>
 </head>
-<body class="bg-base-200 text-base-content">
-    <div class="min-h-screen">
-        <div class="navbar bg-base-100/90 backdrop-blur supports-[backdrop-filter]:bg-base-100/70 shadow-sm sticky top-0 z-50 border-b border-base-200 min-h-0 py-2">
-            <div class="container mx-auto px-3">
-                <div class="flex w-full items-center justify-between">
-                    <a class="btn btn-ghost btn-sm text-base font-semibold normal-case" href="/">Job Viewer</a>
+<body class="bg-base-200 text-base-content"
+      data-on:keydown.escape="$json_modal_open = false; $states_modal_open = false">
+    <noscript>
+        <div class="alert alert-warning shadow-lg m-4">
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                <div>
+                    <h3 class="font-bold">JavaScript Required</h3>
+                    <div class="text-sm">This application requires JavaScript to function properly. Please enable JavaScript in your browser settings.</div>
                 </div>
             </div>
         </div>
-        <main class="container mx-auto px-4 py-6">
-            {{block "content" .}}{{end}}
-        </main>
-        <footer class="border-t bg-base-100">
-            <div class="container mx-auto px-4 py-6 text-sm text-base-content/70">
-                Job Viewer
-            </div>
-        </footer>
-    </div>
+    </noscript>
 
-    <script>
-        document.addEventListener("keydown", function (evt) {
-            if (evt.key !== "Escape") return;
-            document.dispatchEvent(new CustomEvent("datastar-signal-patch", {
-                detail: { json_modal_open: false, states_modal_open: false }
-            }));
-        });
-    </script>
+    <div class="min-h-screen">
+        <div class="container mx-auto px-4 py-6 max-w-7xl">
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h1 class="text-2xl font-semibold">Work Dashboard</h1>
+                    <p class="text-sm text-base-content/60 mt-1">AWS Step Functions</p>
+                </div>
+            </div>
+
+            {{block "content" .}}{{end}}
+
+            <div class="text-center text-sm text-base-content/60 mt-12 pt-6 border-t border-base-300">
+                Work Dashboard
+            </div>
+        </div>
+    </div>
 </body>
 </html>

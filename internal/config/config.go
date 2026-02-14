@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ type EnvMapping struct {
 type Config struct {
 	Envs    []EnvMapping
 	Polling PollingConfig
+	Limits  LimitsConfig
 }
 
 type PollingConfig struct {
@@ -26,6 +28,14 @@ type PollingConfig struct {
 	FailuresInterval      time.Duration
 	StateMachinesInterval time.Duration
 	ActiveIntervalByEnv   map[string]time.Duration
+}
+
+type LimitsConfig struct {
+	RequestTimeout      time.Duration
+	MaxPreviewFileSize  int64
+	MaxJSONLineSize     int
+	JSONPreviewMaxChars int
+	SearchStateTTL      time.Duration
 }
 
 func LoadConfig() (*Config, error) {
@@ -39,6 +49,7 @@ func LoadConfig() (*Config, error) {
 
 	config := &Config{
 		Polling: defaultPollingConfig(),
+		Limits:  defaultLimitsConfig(),
 	}
 	for part := range strings.SplitSeq(envs, ",") {
 		mapping := strings.Split(part, ":")
@@ -63,6 +74,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	applyPollingEnv(config)
+	applyLimitsEnv(config)
 	return config, nil
 }
 
@@ -76,6 +88,16 @@ func defaultPollingConfig() PollingConfig {
 			"qa":   10 * time.Second,
 			"prod": 30 * time.Second,
 		},
+	}
+}
+
+func defaultLimitsConfig() LimitsConfig {
+	return LimitsConfig{
+		RequestTimeout:      60 * time.Second,
+		MaxPreviewFileSize:  2 * 1024 * 1024, // 2MB
+		MaxJSONLineSize:     2 * 1024 * 1024, // 2MB
+		JSONPreviewMaxChars: 300,
+		SearchStateTTL:      10 * time.Minute,
 	}
 }
 
@@ -95,11 +117,17 @@ func applyPollingEnv(cfg *Config) {
 	for part := range strings.SplitSeq(cacheEnv, ",") {
 		kv := strings.Split(part, "=")
 		if len(kv) != 2 {
+			slog.Warn("invalid cache config entry, skipping", "entry", part)
 			continue
 		}
 		env := strings.ToLower(strings.TrimSpace(kv[0]))
 		dur, err := time.ParseDuration(strings.TrimSpace(kv[1]))
-		if err != nil || env == "" {
+		if err != nil {
+			slog.Warn("invalid cache duration", "env", env, "value", kv[1], "error", err)
+			continue
+		}
+		if env == "" {
+			slog.Warn("empty environment name in cache config", "entry", part)
 			continue
 		}
 		overrides[env] = dur
@@ -117,4 +145,30 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func applyLimitsEnv(cfg *Config) {
+	cfg.Limits.RequestTimeout = parseDurationEnv("REQUEST_TIMEOUT", cfg.Limits.RequestTimeout)
+	cfg.Limits.SearchStateTTL = parseDurationEnv("SEARCH_STATE_TTL", cfg.Limits.SearchStateTTL)
+
+	if val := strings.TrimSpace(os.Getenv("MAX_PREVIEW_FILE_SIZE")); val != "" {
+		var size int64
+		if _, err := fmt.Sscanf(val, "%d", &size); err == nil && size > 0 {
+			cfg.Limits.MaxPreviewFileSize = size
+		}
+	}
+
+	if val := strings.TrimSpace(os.Getenv("MAX_JSON_LINE_SIZE")); val != "" {
+		var size int
+		if _, err := fmt.Sscanf(val, "%d", &size); err == nil && size > 0 {
+			cfg.Limits.MaxJSONLineSize = size
+		}
+	}
+
+	if val := strings.TrimSpace(os.Getenv("JSON_PREVIEW_MAX_CHARS")); val != "" {
+		var chars int
+		if _, err := fmt.Sscanf(val, "%d", &chars); err == nil && chars > 0 {
+			cfg.Limits.JSONPreviewMaxChars = chars
+		}
+	}
 }

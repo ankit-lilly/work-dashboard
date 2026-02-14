@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path"
@@ -38,27 +39,7 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	failuresCh := s.failuresBroadcaster.Subscribe()
 	defer s.failuresBroadcaster.Unsubscribe(failuresCh)
 
-	smCh := s.stateMachinesBroadcaster.Subscribe()
-	defer s.stateMachinesBroadcaster.Unsubscribe(smCh)
-
-	// Initial fetch for state machines
-	go func() {
-		items, err := s.fetchStateMachines()
-		if err == nil {
-			var buf bytes.Buffer
-			tmpl := s.templateSet("index")
-			if tmpl != nil {
-				_ = tmpl.ExecuteTemplate(&buf, "state-machines-list", map[string]any{
-					"Items": items,
-				})
-				sse.PatchElements(
-					buf.String(),
-					datastar.WithSelector("#state-machines-list"),
-					datastar.WithMode(datastar.ElementPatchModeInner),
-				)
-			}
-		}
-	}()
+	// Note: State machines are loaded on initial page render, no SSE update needed
 	//Update different sections via SSE as data comes in.
 
 	for {
@@ -69,6 +50,9 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 			if !ok {
 				return
 			}
+
+			// Patch signals for counts
+			sse.PatchSignals([]byte(fmt.Sprintf(`{"active_jobs_count": %d}`, len(allActive))))
 
 			var buf bytes.Buffer
 			tmpl := s.templateSet("index")
@@ -102,58 +86,50 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 
+			// Patch signals for counts
+			sse.PatchSignals([]byte(fmt.Sprintf(`{"recent_completed_count": %d}`, len(allCompleted))))
+
 			var buf bytes.Buffer
 			tmpl := s.templateSet("index")
 			if tmpl == nil {
 				return
 			}
-			_ = tmpl.ExecuteTemplate(&buf, "recent-completed", map[string]any{
+			if err := tmpl.ExecuteTemplate(&buf, "recent-completed", map[string]any{
 				"Jobs": allCompleted,
-			})
-
-			sse.PatchElements(
-				buf.String(),
-				datastar.WithSelector("#recent-completed-list"),
-				datastar.WithMode(datastar.ElementPatchModeInner),
-			)
+			}); err != nil {
+				slog.Error("template render failed", "template", "recent-completed", "error", err)
+			} else {
+				sse.PatchElements(
+					buf.String(),
+					datastar.WithSelector("#recent-completed-list"),
+					datastar.WithMode(datastar.ElementPatchModeInner),
+				)
+			}
 
 		case allFailures, ok := <-failuresCh:
 			if !ok {
 				return
 			}
 
+			// Patch signals for counts
+			sse.PatchSignals([]byte(fmt.Sprintf(`{"recent_failures_count": %d}`, len(allFailures))))
+
 			var buf bytes.Buffer
 			tmpl := s.templateSet("index")
 			if tmpl == nil {
 				return
 			}
-			_ = tmpl.ExecuteTemplate(&buf, "recent-failures", map[string]any{
+			if err := tmpl.ExecuteTemplate(&buf, "recent-failures", map[string]any{
 				"Failures": allFailures,
-			})
-
-			sse.PatchElements(
-				buf.String(),
-				datastar.WithSelector("#recent-failures-list"),
-				datastar.WithMode(datastar.ElementPatchModeInner),
-			)
-
-		case allSMs, ok := <-smCh:
-			if !ok {
-				return
+			}); err != nil {
+				slog.Error("template render failed", "template", "recent-failures", "error", err)
+			} else {
+				sse.PatchElements(
+					buf.String(),
+					datastar.WithSelector("#recent-failures-list"),
+					datastar.WithMode(datastar.ElementPatchModeInner),
+				)
 			}
-			var buf bytes.Buffer
-			tmpl := s.templateSet("index")
-			if tmpl == nil {
-				return
-			}
-			_ = tmpl.ExecuteTemplate(&buf, "state-machines-list", map[string]any{
-				"Items": allSMs,
-			})
-			sse.PatchElements(
-				buf.String(),
-				datastar.WithSelector("#state-machines-list"),
-				datastar.WithMode(datastar.ElementPatchModeInner),
-			)
 		}
 	}
 }

@@ -88,8 +88,13 @@ func (b *Broadcaster[T]) Subscribe() chan T {
 
 func (b *Broadcaster[T]) Unsubscribe(ch chan T) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, exists := b.clients[ch]; !exists {
+		return // Already unsubscribed
+	}
+
 	delete(b.clients, ch)
-	b.mu.Unlock()
 	close(ch)
 }
 
