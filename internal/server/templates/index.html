@@ -25,231 +25,260 @@
 
     <!-- Active Executions -->
     <section>
-        <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-                <h2 class="text-lg font-semibold">Active Executions</h2>
-                <div class="badge badge-success badge-sm gap-1.5">
-                    <span class="relative flex h-1.5 w-1.5">
-                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success-content opacity-75"></span>
-                        <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-success-content"></span>
-                    </span>
-                    Live
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 shadow-sm" open data-preserve-attr="open">
+            <summary class="collapse-title min-h-0 py-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold">Active Executions</h2>
+                        <div class="badge badge-success badge-sm gap-1.5">
+                            <span class="relative flex h-1.5 w-1.5">
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success-content opacity-75"></span>
+                                <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-success-content"></span>
+                            </span>
+                            Live
+                        </div>
+                    </div>
+                </div>
+            </summary>
+            <div class="collapse-content pt-0">
+                <div id="active-jobs-list" class="overflow-x-auto">
+                    {{if .ActiveJobsError}}
+                    <div class="p-4 text-sm text-error">Failed to load: {{.ActiveJobsError}}</div>
+                    {{else}}
+                    {{template "active-jobs" (dict "Jobs" .ActiveJobs "Joke" .ActiveJobsJoke)}}
+                    {{end}}
                 </div>
             </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm border border-base-300">
-            <div id="active-jobs-list" class="overflow-x-auto">
-                {{if .ActiveJobsError}}
-                <div class="p-4 text-sm text-error">Failed to load: {{.ActiveJobsError}}</div>
-                {{else}}
-                {{template "active-jobs" (dict "Jobs" .ActiveJobs "Joke" .ActiveJobsJoke)}}
-                {{end}}
-            </div>
-        </div>
+        </details>
     </section>
 
     <!-- Recently Completed -->
     <section>
-        <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-                <h2 class="text-lg font-semibold">Recently Completed</h2>
-                <span class="badge badge-sm badge-ghost">Last 15m</span>
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 shadow-sm" open data-preserve-attr="open">
+            <summary class="collapse-title min-h-0 py-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold">Recently Completed</h2>
+                        <span class="badge badge-sm badge-ghost">Last 15m</span>
+                    </div>
+                </div>
+            </summary>
+            <div class="collapse-content pt-0">
+                <div id="recent-completed-list" class="overflow-x-auto">
+                    {{if .RecentCompletedError}}
+                    <div class="p-4 text-sm text-error">Failed to load: {{.RecentCompletedError}}</div>
+                    {{else}}
+                    {{template "recent-completed" (dict "Jobs" .RecentCompleted)}}
+                    {{end}}
+                </div>
             </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm border border-base-300">
-            <div id="recent-completed-list" class="overflow-x-auto">
-                {{if .RecentCompletedError}}
-                <div class="p-4 text-sm text-error">Failed to load: {{.RecentCompletedError}}</div>
-                {{else}}
-                {{template "recent-completed" (dict "Jobs" .RecentCompleted)}}
-                {{end}}
-            </div>
-        </div>
+        </details>
     </section>
 
     <!-- Recent Failures -->
     <section>
-        <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-                <h2 class="text-lg font-semibold">Recent Failures</h2>
-                <span class="badge badge-sm badge-ghost">Last 24h</span>
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 shadow-sm" open data-preserve-attr="open">
+            <summary class="collapse-title min-h-0 py-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold">Recent Failures</h2>
+                        <span class="badge badge-sm badge-ghost">Last 24h</span>
+                    </div>
+                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                        <input id="failures-search" aria-label="Search failures"
+                            type="text"
+                            class="input input-sm input-bordered join-item w-44"
+                            placeholder="Search..."
+                            data-bind="failuresSearch" />
+                        <select id="failures-env" aria-label="Filter environment"
+                            class="select select-sm select-bordered join-item"
+                            data-bind="failuresEnv">
+                            <option value="all">All</option>
+                            <option value="dev">Dev</option>
+                            <option value="qa">QA</option>
+                            <option value="prod">Prod</option>
+                        </select>
+                    </div>
+                </div>
+            </summary>
+            <div class="collapse-content pt-0">
+                <div id="recent-failures-list" class="max-h-[40vh] overflow-y-auto">
+                    {{if .RecentFailuresError}}
+                    <div class="p-4 text-sm text-error">Failed to load: {{.RecentFailuresError}}</div>
+                    {{else}}
+                    {{template "recent-failures" (dict "Failures" .RecentFailures)}}
+                    {{end}}
+                </div>
             </div>
-            <div class="join join-horizontal">
-                <input id="failures-search" aria-label="Search failures"
-                    type="text"
-                    class="input input-sm input-bordered join-item w-44"
-                    placeholder="Search..."
-                    data-bind="failuresSearch" />
-                <select id="failures-env" aria-label="Filter environment"
-                    class="select select-sm select-bordered join-item"
-                    data-bind="failuresEnv">
-                    <option value="all">All</option>
-                    <option value="dev">Dev</option>
-                    <option value="qa">QA</option>
-                    <option value="prod">Prod</option>
-                </select>
-            </div>
-        </div>
-        <div id="recent-failures-list" class="card bg-base-100 shadow-sm border border-base-300 max-h-[40vh] overflow-y-auto">
-            {{if .RecentFailuresError}}
-            <div class="p-4 text-sm text-error">Failed to load: {{.RecentFailuresError}}</div>
-            {{else}}
-            {{template "recent-failures" (dict "Failures" .RecentFailures)}}
-            {{end}}
-        </div>
+        </details>
     </section>
 
     <!-- State Machines -->
     <section>
-        <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-                <h2 class="text-lg font-semibold">State Machines</h2>
-                <span class="badge badge-sm badge-ghost">Last 10 executions</span>
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 shadow-sm" open data-preserve-attr="open">
+            <summary class="collapse-title min-h-0 py-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold">State Machines</h2>
+                        <span class="badge badge-sm badge-ghost">Last 10 executions</span>
+                    </div>
+                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                        <select id="sm-env" aria-label="Filter environment"
+                            class="select select-sm select-bordered join-item"
+                            data-bind="smEnv"
+                            data-on:change="$selectedSm = ''">
+                            <option value="all">All Envs</option>
+                            <option value="dev">Dev</option>
+                            <option value="qa">QA</option>
+                            <option value="prod">Prod</option>
+                        </select>
+                        <select id="sm-select" aria-label="Select state machine"
+                            class="select select-sm select-bordered join-item min-w-[250px]"
+                            data-bind="selectedSm"
+                            data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; @get('/api/state-machine-executions?env=' + opt.dataset.env + '&arn=' + evt.target.value, {openWhenHidden: true, requestCancellation: 'disabled'}) }"
+                            data-indicator:sm_exec_loading
+                            data-effect="
+                                for (const opt of el.options) {
+                                    if (!opt.dataset.baseEnv) continue;
+                                    const shouldShow = ($smEnv === 'all' || $smEnv === opt.dataset.baseEnv);
+                                    opt.style.display = shouldShow ? '' : 'none';
+                                }
+                                if (el.selectedOptions[0]?.style.display === 'none') {
+                                    el.value = '';
+                                }
+                            ">
+                            <option value="">Select a state machine...</option>
+                            {{if .StateMachines}}
+                            {{range .StateMachines}}
+                            <option value="{{.Arn}}"
+                                    data-env="{{.Env}}"
+                                    data-base-env="{{.BaseEnv}}">
+                                {{.Name}} ({{.Env}})
+                            </option>
+                            {{end}}
+                            {{else}}
+                            <option disabled>No state machines found</option>
+                            {{end}}
+                        </select>
+                    </div>
+                </div>
+            </summary>
+            <div class="collapse-content pt-0">
+                <div id="state-machine-executions" class="max-h-[60vh] overflow-y-auto">
+                    <div id="state-machine-executions-content" class="p-8 text-center text-sm text-base-content/60">
+                        Select a state machine to view executions
+                    </div>
+                </div>
             </div>
-            <div class="join join-horizontal">
-                <select id="sm-env" aria-label="Filter environment"
-                    class="select select-sm select-bordered join-item"
-                    data-bind="smEnv"
-                    data-on:change="$selectedSm = ''">
-                    <option value="all">All Envs</option>
-                    <option value="dev">Dev</option>
-                    <option value="qa">QA</option>
-                    <option value="prod">Prod</option>
-                </select>
-                <select id="sm-select" aria-label="Select state machine"
-                    class="select select-sm select-bordered join-item min-w-[250px]"
-                    data-bind="selectedSm"
-                    data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; @get('/api/state-machine-executions?env=' + opt.dataset.env + '&arn=' + evt.target.value, {openWhenHidden: true, requestCancellation: 'disabled'}) }"
-                    data-indicator:sm_exec_loading
-                    data-effect="
-                        for (const opt of el.options) {
-                            if (!opt.dataset.baseEnv) continue;
-                            const shouldShow = ($smEnv === 'all' || $smEnv === opt.dataset.baseEnv);
-                            opt.style.display = shouldShow ? '' : 'none';
-                        }
-                        if (el.selectedOptions[0]?.style.display === 'none') {
-                            el.value = '';
-                        }
-                    ">
-                    <option value="">Select a state machine...</option>
-                    {{if .StateMachines}}
-                    {{range .StateMachines}}
-                    <option value="{{.Arn}}"
-                            data-env="{{.Env}}"
-                            data-base-env="{{.BaseEnv}}">
-                        {{.Name}} ({{.Env}})
-                    </option>
-                    {{end}}
-                    {{else}}
-                    <option disabled>No state machines found</option>
-                    {{end}}
-                </select>
-            </div>
-        </div>
-        <div id="state-machine-executions" class="card bg-base-100 shadow-sm border border-base-300 max-h-[60vh] overflow-y-auto">
-            <div id="state-machine-executions-content" class="p-8 text-center text-sm text-base-content/60">
-                Select a state machine to view executions
-            </div>
-        </div>
+        </details>
     </section>
 
     <!-- RDS Performance Insights -->
     <section>
-        <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-                <h2 class="text-lg font-semibold">RDS Performance Insights</h2>
-                <button type="button" class="btn btn-circle btn-ghost btn-xs"
-                        data-on:click="$rds_info_modal_open = true"
-                        aria-label="RDS Performance Insights Guide">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </button>
-                <span class="badge badge-sm badge-ghost">Last 2h</span>
-            </div>
-            <div class="join join-horizontal">
-                <select id="rds-env" aria-label="Filter environment"
-                    class="select select-sm select-bordered join-item"
-                    data-bind="rdsEnv"
-                    data-on:change="$selectedRdsDb = ''">
-                    <option value="all">All Envs</option>
-                    <option value="dev">Dev</option>
-                    <option value="qa">QA</option>
-                    <option value="prod">Prod</option>
-                </select>
-            </div>
-        </div>
-        <div id="rds-metrics-container" class="card bg-base-100 shadow-sm border border-base-300 max-h-[45vh] overflow-y-auto">
-            <div id="rds-metrics-content">
-                <div class="p-8 text-center text-sm text-base-content/60">
-                    Loading RDS metrics...
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 shadow-sm" open data-preserve-attr="open">
+            <summary class="collapse-title min-h-0 py-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold">RDS Performance Insights</h2>
+                        <button type="button" class="btn btn-circle btn-ghost btn-xs"
+                                data-on:click="$rds_info_modal_open = true; event.stopPropagation()"
+                                aria-label="RDS Performance Insights Guide"
+                                onclick="event.stopPropagation()">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </button>
+                        <span class="badge badge-sm badge-ghost">Last 2h</span>
+                    </div>
+                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                        <select id="rds-env" aria-label="Filter environment"
+                            class="select select-sm select-bordered join-item"
+                            data-bind="rdsEnv"
+                            data-on:change="$selectedRdsDb = ''">
+                            <option value="all">All Envs</option>
+                            <option value="dev">Dev</option>
+                            <option value="qa">QA</option>
+                            <option value="prod">Prod</option>
+                        </select>
+                    </div>
+                </div>
+            </summary>
+            <div class="collapse-content pt-0">
+                <div id="rds-metrics-container" class="max-h-[45vh] overflow-y-auto">
+                    <div id="rds-metrics-content">
+                        <div class="p-8 text-center text-sm text-base-content/60">
+                            Loading RDS metrics...
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
+        </details>
     </section>
 
     <!-- Record Tracer -->
     <section>
-        <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
-                <h2 class="text-lg font-semibold">Record Tracer</h2>
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 shadow-sm" open data-preserve-attr="open">
+            <summary class="collapse-title min-h-0 py-3">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-lg font-semibold">Record Tracer</h2>
+                </div>
+            </summary>
+            <div class="collapse-content pt-0">
+                <div class="p-4">
+                    <form class="flex flex-wrap gap-2"
+                          data-on:submit="@get('/api/record-search', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})">
+                        <input id="email_address" name="email_address" type="text" aria-label="Email address"
+                            class="input input-sm input-bordered flex-1 min-w-[200px]"
+                            placeholder="Email address" />
+                        <select id="env" name="env" aria-label="Environment" class="select select-sm select-bordered"
+                            data-bind="recordEnv"
+                            data-on:change="$recordSm = ''">
+                            <option value="all">All envs</option>
+                            <option value="dev">Dev</option>
+                            <option value="qa">QA</option>
+                            <option value="prod">Prod</option>
+                        </select>
+                        <select id="state_machine" name="state_machine" aria-label="State machine"
+                            class="select select-sm select-bordered"
+                            data-bind="recordSm"
+                            data-effect="
+                                for (const opt of el.options) {
+                                    if (!opt.dataset.baseEnv) continue;
+                                    opt.style.display = ($recordEnv === 'all' || $recordEnv === opt.dataset.baseEnv) ? '' : 'none';
+                                }
+                                if (el.selectedOptions[0]?.style.display === 'none') {
+                                    el.value = '';
+                                }
+                            ">
+                            <option value="">All state machines</option>
+                            {{range .StateMachines}}
+                            <option value="{{.Arn}}"
+                                    data-env="{{.Env}}"
+                                    data-base-env="{{.BaseEnv}}">
+                                {{.Name}} ({{.Env}})
+                            </option>
+                            {{end}}
+                        </select>
+                        <input id="start_date" name="start_date" type="date"
+                            class="input input-sm input-bordered"
+                            placeholder="Start" />
+                        <input id="end_date" name="end_date" type="date"
+                            class="input input-sm input-bordered"
+                            placeholder="End" />
+                        <button type="submit" class="btn btn-sm btn-primary">Search</button>
+                        <button type="button" class="btn btn-sm btn-outline"
+                            data-on:click="@get('/api/record-search-cancel?key=' + $recordSearchKey)">
+                            Stop
+                        </button>
+                    </form>
+                </div>
+                <div id="record-search-results" class="mt-4">
+                    <div class="p-4 text-sm text-base-content/60">
+                        Enter an email to search
+                    </div>
+                </div>
             </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm border border-base-300">
-            <div class="card-body p-4">
-                <form class="flex flex-wrap gap-2"
-                      data-on:submit="@get('/api/record-search', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})">
-                    <input id="email_address" name="email_address" type="text" aria-label="Email address"
-                        class="input input-sm input-bordered flex-1 min-w-[200px]"
-                        placeholder="Email address" />
-                    <select id="env" name="env" aria-label="Environment" class="select select-sm select-bordered"
-                        data-bind="recordEnv"
-                        data-on:change="$recordSm = ''">
-                        <option value="all">All envs</option>
-                        <option value="dev">Dev</option>
-                        <option value="qa">QA</option>
-                        <option value="prod">Prod</option>
-                    </select>
-                    <select id="state_machine" name="state_machine" aria-label="State machine"
-                        class="select select-sm select-bordered"
-                        data-bind="recordSm"
-                        data-effect="
-                            for (const opt of el.options) {
-                                if (!opt.dataset.baseEnv) continue;
-                                opt.style.display = ($recordEnv === 'all' || $recordEnv === opt.dataset.baseEnv) ? '' : 'none';
-                            }
-                            if (el.selectedOptions[0]?.style.display === 'none') {
-                                el.value = '';
-                            }
-                        ">
-                        <option value="">All state machines</option>
-                        {{range .StateMachines}}
-                        <option value="{{.Arn}}"
-                                data-env="{{.Env}}"
-                                data-base-env="{{.BaseEnv}}">
-                            {{.Name}} ({{.Env}})
-                        </option>
-                        {{end}}
-                    </select>
-                    <input id="start_date" name="start_date" type="date"
-                        class="input input-sm input-bordered"
-                        placeholder="Start" />
-                    <input id="end_date" name="end_date" type="date"
-                        class="input input-sm input-bordered"
-                        placeholder="End" />
-                    <button type="submit" class="btn btn-sm btn-primary">Search</button>
-                    <button type="button" class="btn btn-sm btn-outline"
-                        data-on:click="@get('/api/record-search-cancel?key=' + $recordSearchKey)">
-                        Stop
-                    </button>
-                </form>
-            </div>
-        </div>
-        <div id="record-search-results" class="card bg-base-100 shadow-sm border border-base-300 mt-4">
-            <div class="p-4 text-sm text-base-content/60">
-                Enter an email to search
-            </div>
-        </div>
+        </details>
     </section>
 </div>
 
