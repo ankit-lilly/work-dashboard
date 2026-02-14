@@ -58,6 +58,11 @@ type Server struct {
 
 	activeIntervalLogged map[string]time.Duration
 
+	credentialErrorMu  sync.RWMutex
+	credentialError    bool
+	credentialErrorMsg string
+	credentialErrorAt  time.Time
+
 	flashActiveSeen    map[string]time.Time
 	flashCompletedSeen map[string]time.Time
 	flashFailuresSeen  map[string]time.Time
@@ -290,4 +295,28 @@ func (s *Server) getActiveExecutionsCount() int {
 		count += len(execs)
 	}
 	return count
+}
+
+// setCredentialError records a credential error for display in UI
+func (s *Server) setCredentialError(err error) {
+	s.credentialErrorMu.Lock()
+	defer s.credentialErrorMu.Unlock()
+	s.credentialError = true
+	s.credentialErrorMsg = err.Error()
+	s.credentialErrorAt = time.Now()
+}
+
+// clearCredentialError clears the credential error state
+func (s *Server) clearCredentialError() {
+	s.credentialErrorMu.Lock()
+	defer s.credentialErrorMu.Unlock()
+	s.credentialError = false
+	s.credentialErrorMsg = ""
+}
+
+// getCredentialError returns the current credential error state
+func (s *Server) getCredentialError() (bool, string, time.Time) {
+	s.credentialErrorMu.RLock()
+	defer s.credentialErrorMu.RUnlock()
+	return s.credentialError, s.credentialErrorMsg, s.credentialErrorAt
 }

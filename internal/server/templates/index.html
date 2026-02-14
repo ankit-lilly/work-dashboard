@@ -4,6 +4,8 @@
          json_modal_open: false,
          states_modal_open: false,
          rds_info_modal_open: false,
+         credential_error: false,
+         credential_error_msg: '',
          selectedSm: '',
          smEnv: 'all',
          failuresEnv: 'all',
@@ -22,6 +24,26 @@
          rds_db_count: 0
      }"
      data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'}); @get('/api/rds-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
+
+    <!-- AWS Credential Error Banner -->
+    <div class="mb-4" data-show="$credential_error">
+        <div class="alert alert-error shadow-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div class="flex-1">
+                <h3 class="font-bold">AWS Credentials Expired</h3>
+                <div class="text-sm">Your AWS SSO token has expired. Please re-authenticate to continue.</div>
+                <div class="text-xs mt-1 font-mono opacity-75" data-text="$credential_error_msg"></div>
+            </div>
+            <div class="flex flex-col gap-2">
+                <button class="btn btn-sm btn-ghost" data-on:click="$credential_error = false">Dismiss</button>
+                <div class="text-xs text-base-content/70">
+                    Run: <code class="bg-base-content/20 px-2 py-1 rounded">aws sso login --profile YOUR_PROFILE</code>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Active Executions -->
     <section>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,4 +91,22 @@ func NewClientManager(ctx context.Context, cfg *config.Config) (*ClientManager, 
 	}
 
 	return manager, nil
+}
+
+// IsCredentialError checks if an error is due to expired or invalid AWS credentials
+func IsCredentialError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "expired") ||
+		strings.Contains(errStr, "invalid token") ||
+		strings.Contains(errStr, "token is expired") ||
+		strings.Contains(errStr, "security token included in the request is expired") ||
+		strings.Contains(errStr, "expiredtoken") ||
+		strings.Contains(errStr, "expiredtokenexception") ||
+		strings.Contains(errStr, "credentials") && strings.Contains(errStr, "expired") ||
+		strings.Contains(errStr, "failed to refresh cached credentials") ||
+		strings.Contains(errStr, "refresh cached sso token failed") ||
+		strings.Contains(errStr, "unable to refresh sso token")
 }

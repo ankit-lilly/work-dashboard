@@ -39,6 +39,11 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	failuresCh := s.failuresBroadcaster.Subscribe()
 	defer s.failuresBroadcaster.Unsubscribe(failuresCh)
 
+	// Send initial credential error state if present
+	if hasError, errMsg, _ := s.getCredentialError(); hasError {
+		sse.PatchSignals([]byte(fmt.Sprintf(`{"credential_error": true, "credential_error_msg": %q}`, errMsg)))
+	}
+
 	// Note: State machines are loaded on initial page render, no SSE update needed
 	//Update different sections via SSE as data comes in.
 
@@ -49,6 +54,13 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 		case allActive, ok := <-activeCh:
 			if !ok {
 				return
+			}
+
+			// Check and send credential error state
+			if hasError, errMsg, _ := s.getCredentialError(); hasError {
+				sse.PatchSignals([]byte(fmt.Sprintf(`{"credential_error": true, "credential_error_msg": %q}`, errMsg)))
+			} else {
+				sse.PatchSignals([]byte(`{"credential_error": false, "credential_error_msg": ""}`))
 			}
 
 			// Patch signals for counts
@@ -264,6 +276,7 @@ func (s *Server) fetchActiveExecutions() ([]aws.Execution, error) {
 
 			active, err := c.ListActiveExecutions(ctx)
 			if err == nil {
+				s.clearCredentialError() // Clear error on success
 				s.activeCacheMu.Lock()
 				s.activeCache[c.EnvName] = active
 				s.activeCacheMu.Unlock()
@@ -273,6 +286,12 @@ func (s *Server) fetchActiveExecutions() ([]aws.Execution, error) {
 				mu.Unlock()
 				return
 			}
+
+			// Check if it's a credential error
+			if aws.IsCredentialError(err) {
+				s.setCredentialError(err)
+			}
+
 			slog.Warn("list active executions failed", "env", c.EnvName, "err", err)
 			// fallback to last successful snapshot for this env
 			s.activeCacheMu.Lock()
