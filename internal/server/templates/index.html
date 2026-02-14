@@ -3,6 +3,7 @@
      data-signals="{
          json_modal_open: false,
          states_modal_open: false,
+         rds_info_modal_open: false,
          selectedSm: '',
          smEnv: 'all',
          failuresEnv: 'all',
@@ -157,6 +158,13 @@
         <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-3">
                 <h2 class="text-lg font-semibold">RDS Performance Insights</h2>
+                <button type="button" class="btn btn-circle btn-ghost btn-xs"
+                        data-on:click="$rds_info_modal_open = true"
+                        aria-label="RDS Performance Insights Guide">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </button>
                 <span class="badge badge-sm badge-ghost">Last 2h</span>
             </div>
             <div class="join join-horizontal">
@@ -275,6 +283,128 @@
     </div>
     <form method="dialog" class="modal-backdrop">
         <button data-on:click="$states_modal_open = false">close</button>
+    </form>
+</dialog>
+
+<!-- RDS Info Modal -->
+<dialog class="modal" data-class="{'modal-open': $rds_info_modal_open}">
+    <div class="modal-box max-w-5xl max-h-[85vh]">
+        <form method="dialog">
+            <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                aria-label="Close" data-on:click="$rds_info_modal_open = false">✕</button>
+        </form>
+        <h3 class="font-semibold text-xl mb-4">Understanding Amazon RDS Performance Insights</h3>
+        <div class="prose prose-sm max-w-none overflow-y-auto max-h-[70vh]">
+            <p class="text-sm text-base-content/70 italic mb-4">How to Quickly Identify Resource-Consuming SQL Queries</p>
+
+            <h4 class="text-md font-semibold mt-4 mb-2">What is Performance Insights?</h4>
+            <p>Performance Insights is a database-centric dashboard that shows the database load. Database load is calculated from samples taken on active sessions once a second. For each sample, information is collected about:</p>
+            <ul class="list-disc pl-6 mb-4">
+                <li>SQL statement</li>
+                <li>User</li>
+                <li>Session state (running on CPU or waiting)</li>
+                <li>Host</li>
+            </ul>
+
+            <p>Sampling means some data might be missing, but collecting data once a second still provides a good overview of database activity. Queries running longer than one second will always be sampled, frequent shorter queries are likely to be sampled, but infrequent or very fast queries might be missed.</p>
+
+            <div class="alert alert-info text-sm my-4">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>The colors used in the dashboard correspond between the top and bottom graphs.</span>
+            </div>
+
+            <h4 class="text-md font-semibold mt-4 mb-2">Key Metrics</h4>
+
+            <h5 class="text-sm font-semibold mt-3 mb-1">Max vCPU</h5>
+            <p>Shows the maximum available virtual CPUs for your database instance-type. This is shown as a dashed line in the Database load diagram.</p>
+            <p><strong>Why is it important?</strong> The number of vCPUs determines how many processes can run in parallel without interfering with each other. When the database load exceeds this line, it indicates that someone is waiting.</p>
+
+            <h5 class="text-sm font-semibold mt-3 mb-1">Average Active Sessions (AAS)</h5>
+            <p>AAS shows how many users are concurrently active in the database, averaged over a period. The average is calculated from samples taken each second.</p>
+
+            <div class="bg-base-200 p-4 rounded-lg my-4">
+                <p class="font-semibold text-sm mb-2">Rules of Thumb:</p>
+                <ul class="list-disc pl-6 space-y-1">
+                    <li><code class="text-xs">AAS &lt; 1</code>: The database is not blocked</li>
+                    <li><code class="text-xs">AAS ~ 0</code>: The database is idle</li>
+                    <li><code class="text-xs">AAS &lt; vCPUs</code>: CPU is available</li>
+                    <li><code class="text-xs">AAS &gt; just above vCPUs</code>: might have performance problems</li>
+                    <li><code class="text-xs">AAS &gt;&gt; vCPUs</code>: there is a bottleneck</li>
+                </ul>
+            </div>
+
+            <h4 class="text-md font-semibold mt-4 mb-2">Where to Start?</h4>
+            <p>Navigate to the Amazon RDS landing page and select <strong>Databases</strong>. Pay particular attention to the status bar of the CPU (utilization %) and Current Activity (sessions) columns, which show activity over the last five minutes:</p>
+            <ul class="list-disc pl-6 mb-4">
+                <li><strong>Empty</strong>: The database is idle</li>
+                <li><strong>Blue only</strong>: The database is under load but still within CPU capacity</li>
+                <li><strong>Red</strong>: The database load is over the CPU capacity, indicating that the database is overloaded and has a potential bottleneck</li>
+            </ul>
+
+            <div class="alert alert-warning text-sm my-4">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span>This only shows current activity, so problems that occur infrequently may not be easy to spot here.</span>
+            </div>
+
+            <h4 class="text-md font-semibold mt-4 mb-2">The Dashboard</h4>
+            <p>The dashboard is divided into two main parts:</p>
+            <ol class="list-decimal pl-6 mb-4">
+                <li><strong>Database load</strong>: Shows the load of the database over time</li>
+                <li><strong>Top SQL</strong>: Shows the top SQL statements ranked by the load they put on the database</li>
+            </ol>
+
+            <h4 class="text-md font-semibold mt-4 mb-2">Analyzing Database Load</h4>
+
+            <h5 class="text-sm font-semibold mt-3 mb-1">View graphs sliced by Waits (default)</h5>
+            <p>The Y-axis shows the AAS and should be compared to the dashed max vCPU line. The X-axis represents time. Look for what you are waiting for (e.g., CPU shown in green).</p>
+
+            <h5 class="text-sm font-semibold mt-3 mb-1">Top SQL diagram</h5>
+            <p>Look for queries that are consuming resources. The <strong>Avg latency</strong> column shows query execution times. Queries with high latency (150+ ms) for simple tasks are candidates for optimization.</p>
+
+            <h5 class="text-sm font-semibold mt-3 mb-1">View graphs sliced by SQL</h5>
+            <p>Switch the view to see how much each query contributes to the database load. The coloring shows query-specific resource consumption.</p>
+
+            <h4 class="text-md font-semibold mt-4 mb-2">Finding Solutions</h4>
+            <p>Once you've identified resource-intensive queries:</p>
+            <ul class="list-disc pl-6 mb-4">
+                <li>Check if tables have proper indexes</li>
+                <li>Run <code class="text-xs bg-base-200 px-1 py-0.5 rounded">EXPLAIN ANALYZE</code> to analyze query execution plans</li>
+                <li>Look for sequential scans that could benefit from indexes</li>
+                <li>Consult with a DBA if the root cause is complex</li>
+            </ul>
+
+            <div class="bg-base-200 p-4 rounded-lg my-4">
+                <p class="font-semibold text-sm mb-2">Example: Adding an Index</p>
+                <code class="text-xs block mb-2">CREATE INDEX person_idx_1 ON person(birth_date);</code>
+                <p class="text-sm">This simple index can reduce query execution time from 57ms to &lt;1ms for date-based lookups.</p>
+            </div>
+
+            <h4 class="text-md font-semibold mt-4 mb-2">Key Takeaways</h4>
+            <ul class="list-disc pl-6 mb-4">
+                <li>Performance Insights allows you to quickly assess database load and identify optimization opportunities</li>
+                <li>Use it proactively to identify queries that can benefit from optimization even in well-performing databases</li>
+                <li>Select larger timespans (e.g., a week) to reveal performance patterns over time</li>
+                <li>With proper optimization, you might scale down to a smaller instance and save money while improving performance</li>
+            </ul>
+
+            <div class="alert alert-success text-sm my-4">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span><strong>Pro tip:</strong> Use Performance Insights to find optimization opportunities before scaling up your database instance.</span>
+            </div>
+
+            <p class="text-xs text-base-content/60 mt-6">
+                Source: <a href="https://medium.com/fremtind/understanding-amazon-rds-performance-insights-for-postgres-e8ef54bb0dd2" target="_blank" class="link">Understanding Amazon RDS Performance Insights for Postgres</a> by Audun Persson
+            </p>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button data-on:click="$rds_info_modal_open = false">close</button>
     </form>
 </dialog>
 {{end}}

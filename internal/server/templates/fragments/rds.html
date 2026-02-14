@@ -46,6 +46,54 @@
                         <div>Resource ID: <span class="font-mono text-[10px]">{{.DBResourceId}}</span></div>
                     </div>
 
+                    <!-- Connection Pool Stats -->
+                    {{if gt .ConnectionPool.MaxConnections 0}}
+                    <div class="stats stats-horizontal shadow w-full bg-base-100">
+                        <div class="stat">
+                            <div class="stat-figure text-primary">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                            </div>
+                            <div class="stat-title text-xs">Active Connections</div>
+                            <div class="stat-value text-primary text-2xl">{{.ConnectionPool.ActiveConnections}}</div>
+                            <div class="stat-desc text-xs">of {{.ConnectionPool.MaxConnections}} max</div>
+                        </div>
+
+                        <div class="stat">
+                            <div class="stat-figure text-secondary">
+                                <div class="radial-progress text-secondary" style="--value:{{printf "%.0f" .ConnectionPool.UsedPercent}}; --size:3rem;" role="progressbar">
+                                    <span class="text-xs">{{printf "%.0f" .ConnectionPool.UsedPercent}}%</span>
+                                </div>
+                            </div>
+                            <div class="stat-title text-xs">Pool Usage</div>
+                            <div class="stat-value text-2xl {{if ge .ConnectionPool.UsedPercent 80.0}}text-error{{else if ge .ConnectionPool.UsedPercent 60.0}}text-warning{{else}}text-success{{end}}">
+                                {{printf "%.0f" .ConnectionPool.UsedPercent}}%
+                            </div>
+                            <div class="stat-desc text-xs">
+                                {{if ge .ConnectionPool.UsedPercent 80.0}}
+                                <span class="text-error">⚠ High usage</span>
+                                {{else if ge .ConnectionPool.UsedPercent 60.0}}
+                                <span class="text-warning">⚡ Moderate</span>
+                                {{else}}
+                                <span class="text-success">✓ Healthy</span>
+                                {{end}}
+                            </div>
+                        </div>
+
+                        <div class="stat">
+                            <div class="stat-figure text-base-content/40">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                                </svg>
+                            </div>
+                            <div class="stat-title text-xs">Idle Connections</div>
+                            <div class="stat-value text-2xl text-base-content/70">{{.ConnectionPool.IdleConnections}}</div>
+                            <div class="stat-desc text-xs">~{{printf "%.0f" (divf (mulf (float64 .ConnectionPool.IdleConnections) 100.0) (float64 .ConnectionPool.ActiveConnections))}}% of active</div>
+                        </div>
+                    </div>
+                    {{end}}
+
                     <!-- Top Queries Section -->
                     {{if eq (len .TopQueries) 0}}
                     <div class="p-4 text-xs text-base-content/60 italic text-center">

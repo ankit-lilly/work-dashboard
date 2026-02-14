@@ -10,6 +10,7 @@ import (
 	"github.com/EliLillyCo/work-dashboard/internal/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/pi"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -27,6 +28,7 @@ type Client struct {
 	Logs    *cloudwatchlogs.Client
 	RDS     *rds.Client
 	PI      *pi.Client
+	CW      *cloudwatch.Client
 
 	StateMachinesMu sync.RWMutex
 	StateMachines   []types.StateMachineListItem
@@ -79,6 +81,7 @@ func NewClientManager(ctx context.Context, cfg *config.Config) (*ClientManager, 
 			Logs:        cloudwatchlogs.NewFromConfig(awsCfg),
 			RDS:         rds.NewFromConfig(awsCfg),
 			PI:          pi.NewFromConfig(awsCfg),
+			CW:          cloudwatch.NewFromConfig(awsCfg),
 			execCache:   make(map[execCacheKey]execCacheEntry),
 			execLimiter: rate.NewLimiter(rate.Every(200*time.Millisecond), 5),
 		}

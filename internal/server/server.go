@@ -174,6 +174,18 @@ func (s *Server) parseTemplates() {
 			}
 			return "text-success"
 		},
+		"float64": func(i int) float64 {
+			return float64(i)
+		},
+		"mulf": func(a, b float64) float64 {
+			return a * b
+		},
+		"divf": func(a, b float64) float64 {
+			if b == 0 {
+				return 0
+			}
+			return a / b
+		},
 	}
 
 	parseSet := func(name string, patterns ...string) *template.Template {

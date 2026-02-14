@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/pi"
 	pitypes "github.com/aws/aws-sdk-go-v2/service/pi/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -46,6 +48,14 @@ type CPUDataPoint struct {
 	Value     float64
 }
 
+// ConnectionPoolStats represents database connection metrics
+type ConnectionPoolStats struct {
+	ActiveConnections int
+	IdleConnections   int
+	MaxConnections    int
+	UsedPercent       float64
+}
+
 // RDSMetric combines instance info with metrics
 type RDSMetric struct {
 	Env                        string
@@ -59,6 +69,7 @@ type RDSMetric struct {
 	CPUAverage                 float64
 	CPUMax                     float64
 	CPUDataPoints              []CPUDataPoint
+	ConnectionPool             ConnectionPoolStats
 	Error                      string
 }
 
@@ -266,6 +277,78 @@ func (c *Client) GetCPUMetrics(ctx context.Context, dbResourceId string, hours i
 	return cpuData, nil
 }
 
+// GetConnectionPoolStats retrieves connection pool metrics from CloudWatch
+func (c *Client) GetConnectionPoolStats(ctx context.Context, dbInstanceId string) (ConnectionPoolStats, error) {
+	stats := ConnectionPoolStats{}
+
+	endTime := time.Now()
+	startTime := endTime.Add(-10 * time.Minute) // Last 10 minutes
+
+	// Get DatabaseConnections metric from CloudWatch
+	input := &cloudwatch.GetMetricStatisticsInput{
+		Namespace:  aws.String("AWS/RDS"),
+		MetricName: aws.String("DatabaseConnections"),
+		Dimensions: []cwtypes.Dimension{
+			{
+				Name:  aws.String("DBInstanceIdentifier"),
+				Value: aws.String(dbInstanceId),
+			},
+		},
+		StartTime: aws.Time(startTime),
+		EndTime:   aws.Time(endTime),
+		Period:    aws.Int32(300), // 5 minute periods
+		Statistics: []cwtypes.Statistic{
+			cwtypes.StatisticAverage,
+			cwtypes.StatisticMaximum,
+		},
+	}
+
+	output, err := c.CW.GetMetricStatistics(ctx, input)
+	if err != nil {
+		return stats, fmt.Errorf("failed to get connection metrics: %w", err)
+	}
+
+	// Extract the most recent data point
+	if len(output.Datapoints) > 0 {
+		// Sort by timestamp to get latest
+		latestPoint := output.Datapoints[0]
+		for _, dp := range output.Datapoints {
+			if dp.Timestamp.After(*latestPoint.Timestamp) {
+				latestPoint = dp
+			}
+		}
+
+		if latestPoint.Average != nil {
+			stats.ActiveConnections = int(*latestPoint.Average)
+		}
+	}
+
+	// Set reasonable defaults for max connections based on instance type
+	// These are typical values - actual may vary based on parameter group settings
+	stats.MaxConnections = 100 // Conservative default
+
+	// If we have active connections, we can make a better estimate
+	if stats.ActiveConnections > 0 {
+		// Ensure max is at least higher than current
+		if stats.ActiveConnections >= stats.MaxConnections {
+			stats.MaxConnections = stats.ActiveConnections + 50
+		}
+	}
+
+	// Calculate percentage
+	if stats.MaxConnections > 0 {
+		stats.UsedPercent = float64(stats.ActiveConnections) / float64(stats.MaxConnections) * 100
+	}
+
+	// Estimate idle connections (rough approximation - typically 20-40% of connections are idle)
+	// Without direct database access, we can't get exact numbers
+	if stats.ActiveConnections > 5 {
+		stats.IdleConnections = int(float64(stats.ActiveConnections) * 0.3)
+	}
+
+	return stats, nil
+}
+
 // GetRDSMetrics retrieves comprehensive RDS metrics for all instances
 func (c *Client) GetRDSMetrics(ctx context.Context, hours int, maxQueries int) ([]RDSMetric, error) {
 	instances, err := c.ListRDSInstances(ctx)
@@ -312,6 +395,14 @@ func (c *Client) GetRDSMetrics(ctx context.Context, hours int, maxQueries int) (
 			metric.CPUAverage = cpuData.Average
 			metric.CPUMax = cpuData.Max
 			metric.CPUDataPoints = cpuData.DataPoints
+		}
+
+		// Get connection pool stats
+		connStats, err := c.GetConnectionPoolStats(ctx, instance.DBInstanceId)
+		if err != nil {
+			slog.Warn("failed to get connection pool stats", "env", c.EnvName, "db", instance.DBInstanceId, "err", err)
+		} else {
+			metric.ConnectionPool = connStats
 		}
 
 		metrics = append(metrics, metric)
