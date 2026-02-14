@@ -74,6 +74,7 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 				buf.String(),
 				datastar.WithSelector("#"+targetID),
 				datastar.WithMode(datastar.ElementPatchModeInner),
+				datastar.WithUseViewTransitions(false),
 			)
 		}
 		return
@@ -97,6 +98,7 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 				buf.String(),
 				datastar.WithSelector("#"+targetID),
 				datastar.WithMode(datastar.ElementPatchModeInner),
+				datastar.WithUseViewTransitions(false),
 			)
 		}
 		return

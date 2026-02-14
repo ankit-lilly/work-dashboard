@@ -75,6 +75,7 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 				buf.String(),
 				datastar.WithSelector("#active-jobs-list"),
 				datastar.WithMode(datastar.ElementPatchModeInner),
+				datastar.WithUseViewTransitions(false),
 			)
 
 		case allCompleted, ok := <-completedCh:
@@ -103,6 +104,7 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 					buf.String(),
 					datastar.WithSelector("#recent-completed-list"),
 					datastar.WithMode(datastar.ElementPatchModeInner),
+					datastar.WithUseViewTransitions(false),
 				)
 			}
 
@@ -128,6 +130,7 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 					buf.String(),
 					datastar.WithSelector("#recent-failures-list"),
 					datastar.WithMode(datastar.ElementPatchModeInner),
+					datastar.WithUseViewTransitions(false),
 				)
 			}
 		}

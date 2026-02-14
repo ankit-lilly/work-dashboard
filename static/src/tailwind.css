@@ -36,6 +36,37 @@
   --noise: 0;
 }
 
+@plugin "../js/daisyui-theme.mjs" {
+  name: "business";
+  color-scheme: dark;
+  --color-base-100: hsl(240 7% 11%);
+  --color-base-200: hsl(240 7% 8%);
+  --color-base-300: hsl(240 7% 5%);
+  --color-base-content: hsl(0 0% 85%);
+  --color-primary: hsl(240 75% 70%);
+  --color-primary-content: hsl(240 7% 11%);
+  --color-secondary: hsl(300 30% 60%);
+  --color-secondary-content: hsl(240 7% 11%);
+  --color-accent: hsl(200 80% 60%);
+  --color-accent-content: hsl(240 7% 11%);
+  --color-neutral: hsl(240 4% 16%);
+  --color-neutral-content: hsl(0 0% 85%);
+  --color-info: hsl(200 80% 65%);
+  --color-info-content: hsl(240 7% 11%);
+  --color-success: hsl(140 55% 55%);
+  --color-success-content: hsl(240 7% 11%);
+  --color-warning: hsl(40 80% 60%);
+  --color-warning-content: hsl(240 7% 11%);
+  --color-error: hsl(0 70% 60%);
+  --color-error-content: hsl(240 7% 11%);
+  --radius-box: 0.5rem;
+  --radius-field: 0.4rem;
+  --radius-selector: 0.4rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
 @layer base {
   html {
     scroll-behavior: smooth;

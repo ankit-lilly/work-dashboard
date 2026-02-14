@@ -3,7 +3,8 @@
     {{if .Metrics}}
         {{range .Metrics}}
         <details class="collapse collapse-arrow border-b border-base-200 bg-base-100"
-                 data-show="($rdsEnv == 'all' || $rdsEnv == '{{.Env}}'.split(':')[0]) && ($selectedRdsDb == '' || $selectedRdsDb == '{{.DBInstanceId}}')">
+                 data-preserve-attr="open"
+                 data-show="($rdsEnv == 'all' || $rdsEnv == '{{.Env}}'.split(':')[0]) && ($selectedRdsDb == '' || $selectedRdsDb == '{{.DBInstanceId}}')">>
             <summary class="collapse-title min-h-0 py-4 cursor-pointer">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">

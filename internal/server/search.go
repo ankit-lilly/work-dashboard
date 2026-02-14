@@ -83,7 +83,7 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 			}); err != nil {
 				slog.Error("template render failed", "template", "record-search-results", "error", err)
 			} else {
-				sse.PatchElements(buf.String())
+				sse.PatchElements(buf.String(), datastar.WithUseViewTransitions(false))
 			}
 		}
 		return
@@ -165,6 +165,7 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 						buf.String(),
 						datastar.WithSelector("#record-search-rows"),
 						datastar.WithMode(datastar.ElementPatchModeAppend),
+						datastar.WithUseViewTransitions(false),
 					)
 				}
 			}
@@ -185,6 +186,7 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 					statusBuf.String(),
 					datastar.WithSelector("#record-search-status"),
 					datastar.WithMode(datastar.ElementPatchModeOuter),
+					datastar.WithUseViewTransitions(false),
 				)
 			}
 

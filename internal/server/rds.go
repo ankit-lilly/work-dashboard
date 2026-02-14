@@ -138,6 +138,7 @@ func (s *Server) handleRDSUpdates(w http.ResponseWriter, r *http.Request) {
 				buf.String(),
 				datastar.WithSelector("#rds-metrics-content"),
 				datastar.WithMode(datastar.ElementPatchModeInner),
+				datastar.WithUseViewTransitions(false),
 			)
 		}
 	}

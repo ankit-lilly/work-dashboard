@@ -20,7 +20,7 @@
          rds_loading: false,
          rds_db_count: 0
      }"
-     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'}); @get('/api/rds-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">
+     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'}); @get('/api/rds-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
 
     <!-- Active Executions -->
     <section>
@@ -243,38 +243,38 @@
             </div>
         </div>
     </section>
-
-    <!-- Modals -->
-    <dialog class="modal" data-class="{'modal-open': $json_modal_open}">
-        <div class="modal-box max-w-5xl">
-            <form method="dialog">
-                <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
-                    aria-label="Close" data-on:click="$json_modal_open = false">✕</button>
-            </form>
-            <h3 class="font-semibold text-lg mb-4">JSON Preview</h3>
-            <div id="json-modal-content" class="min-h-[120px]">
-                <div class="p-4 text-sm text-base-content/60">Loading...</div>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop">
-            <button data-on:click="$json_modal_open = false">close</button>
-        </form>
-    </dialog>
-
-    <dialog class="modal" data-class="{'modal-open': $states_modal_open}">
-        <div class="modal-box max-w-5xl">
-            <form method="dialog">
-                <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
-                    aria-label="Close" data-on:click="$states_modal_open = false">✕</button>
-            </form>
-            <h3 class="font-semibold text-lg mb-4">Execution States</h3>
-            <div id="states-modal-content" class="min-h-[120px]">
-                <div class="p-4 text-sm text-base-content/60">Loading...</div>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop">
-            <button data-on:click="$states_modal_open = false">close</button>
-        </form>
-    </dialog>
 </div>
+
+<!-- Modals - Outside SSE update scope to prevent morphing glitches -->
+<dialog class="modal" data-class="{'modal-open': $json_modal_open}">
+    <div class="modal-box max-w-5xl">
+        <form method="dialog">
+            <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                aria-label="Close" data-on:click="$json_modal_open = false">✕</button>
+        </form>
+        <h3 class="font-semibold text-lg mb-4">JSON Preview</h3>
+        <div id="json-modal-content" class="min-h-[120px]">
+            <div class="p-4 text-sm text-base-content/60">Loading...</div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button data-on:click="$json_modal_open = false">close</button>
+    </form>
+</dialog>
+
+<dialog class="modal" data-class="{'modal-open': $states_modal_open}">
+    <div class="modal-box max-w-5xl">
+        <form method="dialog">
+            <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                aria-label="Close" data-on:click="$states_modal_open = false">✕</button>
+        </form>
+        <h3 class="font-semibold text-lg mb-4">Execution States</h3>
+        <div id="states-modal-content" class="min-h-[120px]">
+            <div class="p-4 text-sm text-base-content/60">Loading...</div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button data-on:click="$states_modal_open = false">close</button>
+    </form>
+</dialog>
 {{end}}

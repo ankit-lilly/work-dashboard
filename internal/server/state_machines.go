@@ -100,6 +100,7 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 				buf.String(),
 				datastar.WithSelector("#state-machine-executions-content"),
 				datastar.WithMode(datastar.ElementPatchModeInner),
+				datastar.WithUseViewTransitions(false),
 			)
 		}
 	}
@@ -231,6 +232,7 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 					buf.String(),
 					datastar.WithSelector("#state-machine-executions-rows"),
 					datastar.WithMode(datastar.ElementPatchModeAppend),
+					datastar.WithUseViewTransitions(false),
 				)
 			}
 		}
@@ -249,6 +251,7 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 				buf.String(),
 				datastar.WithSelector("#state-machine-executions-footer"),
 				datastar.WithMode(datastar.ElementPatchModeInner),
+				datastar.WithUseViewTransitions(false),
 			)
 		}
 		return
@@ -453,6 +456,7 @@ func (s *Server) handleS3PrefixList(w http.ResponseWriter, r *http.Request) {
 			buf.String(),
 			datastar.WithSelector("#"+targetID),
 			datastar.WithMode(datastar.ElementPatchModeOuter),
+			datastar.WithUseViewTransitions(false),
 		)
 	}
 }
@@ -503,6 +507,7 @@ func (s *Server) handleS3Search(w http.ResponseWriter, r *http.Request) {
 			buf.String(),
 			datastar.WithSelector("#"+targetID),
 			datastar.WithMode(datastar.ElementPatchModeOuter),
+			datastar.WithUseViewTransitions(false),
 		)
 	}
 }
@@ -599,6 +604,7 @@ func (s *Server) handleS3Preview(w http.ResponseWriter, r *http.Request) {
 			buf.String(),
 			datastar.WithSelector("#"+targetID),
 			datastar.WithMode(datastar.ElementPatchModeOuter),
+			datastar.WithUseViewTransitions(false),
 		)
 	}
 }
