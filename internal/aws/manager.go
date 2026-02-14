@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	"github.com/aws/aws-sdk-go-v2/service/sfn/types"
+	"golang.org/x/time/rate"
 )
 
 type Client struct {
@@ -26,6 +27,10 @@ type Client struct {
 	StateMachinesMu sync.RWMutex
 	StateMachines   []types.StateMachineListItem
 	StateMachinesAt time.Time
+
+	execCacheMu sync.Mutex
+	execCache   map[execCacheKey]execCacheEntry
+	execLimiter *rate.Limiter
 }
 
 type ClientManager struct {
@@ -63,11 +68,13 @@ func NewClientManager(ctx context.Context, cfg *config.Config) (*ClientManager, 
 		}
 
 		client := &Client{
-			EnvName: mapping.Name,
-			Config:  awsCfg,
-			Sfn:     sfn.NewFromConfig(awsCfg),
-			S3:      s3.NewFromConfig(awsCfg),
-			Logs:    cloudwatchlogs.NewFromConfig(awsCfg),
+			EnvName:     mapping.Name,
+			Config:      awsCfg,
+			Sfn:         sfn.NewFromConfig(awsCfg),
+			S3:          s3.NewFromConfig(awsCfg),
+			Logs:        cloudwatchlogs.NewFromConfig(awsCfg),
+			execCache:   make(map[execCacheKey]execCacheEntry),
+			execLimiter: rate.NewLimiter(rate.Every(200*time.Millisecond), 5),
 		}
 
 		manager.Clients[mapping.Name] = client

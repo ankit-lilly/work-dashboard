@@ -43,6 +43,39 @@
         </div>
     </section>
 
+    <!-- Recently Completed Section -->
+    <section id="recent-completed-section">
+        <div class="card bg-base-100/60 border border-base-200">
+            <div class="card-body">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-2">
+                                <h2 class="text-xl font-semibold tracking-tight">Recently Completed</h2>
+                                <span class="badge badge-ghost badge-sm">Last 15m</span>
+                            </div>
+                            <div class="text-xs text-base-content/60">Most recent successful executions.</div>
+                        </div>
+                    </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow-sm border border-base-200 mt-4">
+            <div id="recent-completed-list" class="overflow-x-auto">
+                {{if .RecentCompletedError}}
+                <div class="p-6 text-sm text-error">
+                    Failed to load completed executions. {{.RecentCompletedError}}
+                </div>
+                {{else if .RecentCompleted}}
+                {{template "recent-completed" (dict "Jobs" .RecentCompleted)}}
+                {{else}}
+                <div class="p-8 text-center text-base-content/60">
+                    Looking for recently completed executions...
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </section>
+
     <!-- Recent Failures Section -->
     <section id="recent-failures-section">
         <div class="card bg-base-100/60 border border-base-200">

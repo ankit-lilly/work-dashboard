@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -11,19 +12,48 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sfn/types"
 )
 
+const (
+	execCacheTTLMin = 10 * time.Second
+	execCacheTTLMax = 30 * time.Second
+	execCacheMax    = 512
+)
+
+type execCacheKey struct {
+	arn       string
+	status    types.ExecutionStatus
+	max       int32
+	nextToken string
+}
+
+type execCacheEntry struct {
+	out       *sfn.ListExecutionsOutput
+	expiresAt time.Time
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 type Execution struct {
-	Env           string
-	Name          string
-	ExecutionName string
-	ExecutionArn  string
-	Status        string
-	StartTime     time.Time
-	StopTime      time.Time
-	Duration      string
-	ErrorType     string
-	FailureReason string
-	FailedAt      string
-	Stale         bool
+	Env               string
+	Name              string
+	ExecutionName     string
+	ExecutionArn      string
+	Status            string
+	StartTime         time.Time
+	StopTime          time.Time
+	Duration          string
+	ErrorType         string
+	FailureReason     string
+	FailedAt          string
+	Stale             bool
+	New               bool
+	InputBucket       string
+	InputKey          string
+	InputSize         string
+	OutputBucket      string
+	OutputPrefix      string
+	OutputManifestKey string
 }
 
 func (c *Client) ListActiveExecutions(ctx context.Context) ([]Execution, error) {
@@ -44,7 +74,7 @@ func (c *Client) ListActiveExecutions(ctx context.Context) ([]Execution, error) 
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			execs, err := c.listExecutionsWithRetry(ctx, &sfn.ListExecutionsInput{
+			execs, err := c.listExecutionsCached(ctx, &sfn.ListExecutionsInput{
 				StateMachineArn: sm.StateMachineArn,
 				StatusFilter:    types.ExecutionStatusRunning,
 				MaxResults:      10,
@@ -104,7 +134,7 @@ func (c *Client) ListRecentFailures(ctx context.Context) ([]Execution, error) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			execs, err := c.listExecutionsWithRetry(ctx, &sfn.ListExecutionsInput{
+			execs, err := c.listExecutionsCached(ctx, &sfn.ListExecutionsInput{
 				StateMachineArn: sm.StateMachineArn,
 				StatusFilter:    types.ExecutionStatusFailed,
 				MaxResults:      10,
@@ -161,6 +191,72 @@ func (c *Client) ListRecentFailures(ctx context.Context) ([]Execution, error) {
 	return failures, nil
 }
 
+func (c *Client) ListRecentCompleted(ctx context.Context, since time.Time) ([]Execution, error) {
+	stateMachines, err := c.getStateMachines(ctx, 10*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+
+	var completed []Execution
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+
+	for _, sm := range stateMachines {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(sm types.StateMachineListItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			execs, err := c.listExecutionsCached(ctx, &sfn.ListExecutionsInput{
+				StateMachineArn: sm.StateMachineArn,
+				StatusFilter:    types.ExecutionStatusSucceeded,
+				MaxResults:      10,
+			})
+			if err != nil {
+				slog.Warn("list executions failed", "env", c.EnvName, "state_machine_arn", derefString(sm.StateMachineArn), "err", err)
+				return
+			}
+
+			local := make([]Execution, 0, len(execs.Executions))
+			for _, e := range execs.Executions {
+				if e.StopDate == nil || e.StopDate.Before(since) {
+					continue
+				}
+				duration := ""
+				if e.StartDate != nil && e.StopDate != nil {
+					d := e.StopDate.Sub(*e.StartDate)
+					if d < 0 {
+						d = -d
+					}
+					duration = d.Round(time.Second).String()
+				}
+				local = append(local, Execution{
+					Env:           c.EnvName,
+					Name:          derefString(sm.Name),
+					ExecutionName: derefString(e.Name),
+					ExecutionArn:  derefString(e.ExecutionArn),
+					Status:        string(e.Status),
+					StartTime:     derefTime(e.StartDate),
+					StopTime:      derefTime(e.StopDate),
+					Duration:      duration,
+				})
+			}
+
+			if len(local) == 0 {
+				return
+			}
+			mu.Lock()
+			completed = append(completed, local...)
+			mu.Unlock()
+		}(sm)
+	}
+	wg.Wait()
+
+	return completed, nil
+}
+
 func (c *Client) getStateMachines(ctx context.Context, ttl time.Duration) ([]types.StateMachineListItem, error) {
 	c.StateMachinesMu.RLock()
 	if len(c.StateMachines) > 0 && time.Since(c.StateMachinesAt) < ttl {
@@ -208,8 +304,8 @@ func (c *Client) ListRecentExecutionsByStatus(ctx context.Context, stateMachineA
 	var out []types.ExecutionListItem
 	var nextToken *string
 
-	for page := 0; page < maxPages; page++ {
-		resp, err := c.listExecutionsWithRetry(ctx, &sfn.ListExecutionsInput{
+	for range maxPages {
+		resp, err := c.listExecutionsCached(ctx, &sfn.ListExecutionsInput{
 			StateMachineArn: stateMachineArn,
 			StatusFilter:    status,
 			MaxResults:      100,
@@ -235,13 +331,69 @@ func (c *Client) ListRecentExecutionsByStatus(ctx context.Context, stateMachineA
 	return out, nil
 }
 
+func (c *Client) listExecutionsCached(ctx context.Context, input *sfn.ListExecutionsInput) (*sfn.ListExecutionsOutput, error) {
+	key := execCacheKey{
+		arn:       derefString(input.StateMachineArn),
+		status:    input.StatusFilter,
+		max:       input.MaxResults,
+		nextToken: derefString(input.NextToken),
+	}
+	now := time.Now()
+
+	c.execCacheMu.Lock()
+	if entry, ok := c.execCache[key]; ok && now.Before(entry.expiresAt) {
+		out := entry.out
+		c.execCacheMu.Unlock()
+		return out, nil
+	}
+	c.execCacheMu.Unlock()
+
+	if c.execLimiter != nil {
+		if err := c.execLimiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	out, err := c.listExecutionsWithRetry(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	ttl := randomTTL(execCacheTTLMin, execCacheTTLMax)
+	exp := now.Add(ttl)
+
+	c.execCacheMu.Lock()
+	c.execCache[key] = execCacheEntry{
+		out:       out,
+		expiresAt: exp,
+	}
+	if len(c.execCache) > execCacheMax {
+		for k, v := range c.execCache {
+			if now.After(v.expiresAt) {
+				delete(c.execCache, k)
+			}
+		}
+	}
+	c.execCacheMu.Unlock()
+
+	return out, nil
+}
+
+func randomTTL(min, max time.Duration) time.Duration {
+	if max <= min {
+		return min
+	}
+	delta := max - min
+	return min + time.Duration(rand.Int63n(int64(delta)))
+}
+
 func includeStateMachineName(name *string) bool {
 	if name == nil {
 		return false
 	}
 	n := *name
 
-	if !strings.HasPrefix(n, "mdids-account-automation-relv305-") &&
+	if !strings.HasPrefix(n, "mdids-account-automation-relv305-backend") &&
 		!strings.HasPrefix(n, "mdids-account-automation-backend") &&
 		!strings.HasPrefix(n, "atom5-qa-stack-") &&
 		!strings.HasPrefix(n, "lrl-dtf-sdr") {
@@ -307,6 +459,13 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func derefTime(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
 }
 
 func isThrottlingErr(err error) bool {

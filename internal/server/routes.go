@@ -47,19 +47,21 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	type dashboardData struct {
-		activeJobs        []aws.Execution
-		recentFailures    []aws.Execution
-		stateMachines     []StateMachineItem
-		activeJobsErr     error
-		recentFailuresErr error
-		stateMachinesErr  error
+		activeJobs         []aws.Execution
+		recentCompleted    []aws.Execution
+		recentFailures     []aws.Execution
+		stateMachines      []StateMachineItem
+		activeJobsErr      error
+		recentCompletedErr error
+		recentFailuresErr  error
+		stateMachinesErr   error
 	}
 
 	resultCh := make(chan dashboardData, 1)
 	go func() {
 		var data dashboardData
 		var wg sync.WaitGroup
-		wg.Add(3)
+		wg.Add(4)
 
 		go func() {
 			defer wg.Done()
@@ -67,6 +69,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			data.activeJobs, data.activeJobsErr = prodClient.ListActiveExecutions(ctx)
+		}()
+
+		go func() {
+			defer wg.Done()
+			data.recentCompleted, data.recentCompletedErr = s.fetchRecentCompleted()
 		}()
 
 		go func() {
@@ -98,10 +105,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				}
 				return ""
 			}(),
-			"RecentFailures":      data.recentFailures,
-			"RecentFailuresError": data.recentFailuresErr,
-			"StateMachines":       data.stateMachines,
-			"StateMachinesError":  data.stateMachinesErr,
+			"RecentCompleted":      data.recentCompleted,
+			"RecentCompletedError": data.recentCompletedErr,
+			"RecentFailures":       data.recentFailures,
+			"RecentFailuresError":  data.recentFailuresErr,
+			"StateMachines":        data.stateMachines,
+			"StateMachinesError":   data.stateMachinesErr,
 		})
 	case <-ctx.Done():
 		s.render(w, "index", map[string]any{

@@ -3,14 +3,18 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/EliLillyCo/work-dashboard/internal/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	"github.com/starfederation/datastar-go/datastar"
 )
 
@@ -27,6 +31,9 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 
 	activeCh := s.activeBroadcaster.Subscribe()
 	defer s.activeBroadcaster.Unsubscribe(activeCh)
+
+	completedCh := s.completedBroadcaster.Subscribe()
+	defer s.completedBroadcaster.Unsubscribe(completedCh)
 
 	failuresCh := s.failuresBroadcaster.Subscribe()
 	defer s.failuresBroadcaster.Unsubscribe(failuresCh)
@@ -86,6 +93,30 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 				datastar.WithMode(datastar.ElementPatchModeInner),
 			)
 
+		case allCompleted, ok := <-completedCh:
+			if !ok {
+				return
+			}
+
+			if s.isSameCompletedSnapshot(allCompleted) {
+				continue
+			}
+
+			var buf bytes.Buffer
+			tmpl := s.templateSet("index")
+			if tmpl == nil {
+				return
+			}
+			_ = tmpl.ExecuteTemplate(&buf, "recent-completed", map[string]any{
+				"Jobs": allCompleted,
+			})
+
+			sse.PatchElements(
+				buf.String(),
+				datastar.WithSelector("#recent-completed-list"),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+
 		case allFailures, ok := <-failuresCh:
 			if !ok {
 				return
@@ -125,6 +156,88 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 			)
 		}
 	}
+}
+
+func (s *Server) fetchRecentCompleted() ([]aws.Execution, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	since := time.Now().Add(-15 * time.Minute)
+	var allCompleted []aws.Execution
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, client := range s.awsManager.Clients {
+		wg.Add(1)
+		go func(c *aws.Client) {
+			defer wg.Done()
+			execs, err := c.ListRecentCompleted(ctx, since)
+			if err == nil {
+				for i := range execs {
+					if execs[i].ExecutionArn == "" {
+						continue
+					}
+					desc, err := c.Sfn.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+						ExecutionArn: &execs[i].ExecutionArn,
+					})
+					if err != nil {
+						continue
+					}
+					bucket, key, prefix := extractBucketKeyPrefix(desc.Input)
+					outBucket, outManifestKey := extractResultWriterDetails(desc.Output)
+					outPrefix := prefix
+					if outBucket != "" && outManifestKey != "" {
+						outPrefix = strings.TrimSuffix(outManifestKey, path.Base(outManifestKey))
+					}
+					execs[i].InputBucket = bucket
+					execs[i].InputKey = key
+					execs[i].OutputBucket = outBucket
+					execs[i].OutputPrefix = outPrefix
+					execs[i].OutputManifestKey = outManifestKey
+				}
+				mu.Lock()
+				allCompleted = append(allCompleted, execs...)
+				mu.Unlock()
+				return
+			}
+			slog.Warn("list recent completed failed", "env", c.EnvName, "err", err)
+		}(client)
+	}
+	wg.Wait()
+
+	sort.Slice(allCompleted, func(i, j int) bool {
+		return allCompleted[i].StopTime.After(allCompleted[j].StopTime)
+	})
+
+	s.notifyMu.Lock()
+	allCompleted = s.markNewExecutions(allCompleted, s.flashCompletedSeen)
+	s.notifyMu.Unlock()
+
+	if len(allCompleted) > 50 {
+		allCompleted = allCompleted[:50]
+	}
+
+	return allCompleted, nil
+}
+
+func (s *Server) isSameCompletedSnapshot(execs []aws.Execution) bool {
+	h := sha1.New()
+	for _, e := range execs {
+		h.Write([]byte(e.ExecutionArn))
+		h.Write([]byte(e.Status))
+		if !e.StopTime.IsZero() {
+			h.Write([]byte(e.StopTime.UTC().Format(time.RFC3339Nano)))
+		}
+		h.Write([]byte("|"))
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	s.completedRenderMu.Lock()
+	defer s.completedRenderMu.Unlock()
+	if sum == s.completedRenderHash {
+		return true
+	}
+	s.completedRenderHash = sum
+	return false
 }
 
 func (s *Server) fetchActiveExecutions() ([]aws.Execution, error) {
@@ -199,6 +312,10 @@ func (s *Server) fetchActiveExecutions() ([]aws.Execution, error) {
 		return allActive[i].StartTime.After(allActive[j].StartTime)
 	})
 
+	s.notifyMu.Lock()
+	allActive = s.markNewExecutions(allActive, s.flashActiveSeen)
+	s.notifyMu.Unlock()
+
 	s.notifyNewActiveExecutions(allActive)
 
 	return allActive, nil
@@ -243,6 +360,10 @@ func (s *Server) fetchRecentFailures() ([]aws.Execution, error) {
 	sort.Slice(allFailures, func(i, j int) bool {
 		return allFailures[i].StopTime.After(allFailures[j].StopTime)
 	})
+
+	s.notifyMu.Lock()
+	allFailures = s.markNewExecutions(allFailures, s.flashFailuresSeen)
+	s.notifyMu.Unlock()
 
 	s.notifyNewFailures(allFailures)
 

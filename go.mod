@@ -11,6 +11,7 @@ require (
 	github.com/gen2brain/beeep v0.11.2
 	github.com/joho/godotenv v1.5.1
 	github.com/starfederation/datastar-go v1.1.0
+	golang.org/x/time v0.12.0
 )
 
 require (

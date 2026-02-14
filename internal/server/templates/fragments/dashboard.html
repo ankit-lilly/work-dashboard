@@ -10,7 +10,7 @@
         </thead>
         <tbody id="active-jobs-body" class="divide-y divide-base-200">
             {{range .Jobs}}
-            <tr class="hover"
+            <tr class="hover{{if .New}} flash-new{{end}}"
                 data-show="($failuresEnv == 'all' || $failuresEnv == ('{{.Env}}'.includes(':') ? '{{.Env}}'.split(':')[0] : '{{.Env}}')) && ((($failuresSearch || '').trim() == '') || el.innerText.toLowerCase().includes($failuresSearch.toLowerCase()))">
                 <td>
                     <div class="flex items-center gap-2">
@@ -44,6 +44,96 @@
             {{end}}
         </tbody>
     </table>
+{{end}}
+
+{{define "recent-completed"}}
+<div class="divide-y divide-base-200">
+    {{if .Jobs}}
+        {{range .Jobs}}
+        <details class="collapse collapse-arrow border border-base-200 bg-base-100/90{{if .New}} flash-new{{end}}">
+            <summary class="collapse-title text-xs font-medium">
+                <span class="badge badge-ghost badge-xs mr-2">{{.Env}}</span>
+                <span class="font-mono break-all">{{.ExecutionName}}</span>
+                <span class="ml-2 text-base-content/60">{{.Name}}</span>
+                {{if .StartTime}}<span class="ml-2 text-base-content/60">{{formatTimeLocal .StartTime}}</span>{{end}}
+                {{if .StopTime}}<span class="ml-2 text-base-content/40">→ {{formatTimeLocal .StopTime}}</span>{{end}}
+            </summary>
+            <div class="collapse-content space-y-3">
+                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/60">
+                    <div>
+                        {{if .StartTime}}Start: {{formatTimeLocal .StartTime}}{{end}}
+                        {{if .StopTime}}<span class="ml-2">Stop: {{formatTimeLocal .StopTime}}</span>{{end}}
+                        {{if .Duration}}<span class="ml-2">Duration: {{.Duration}}</span>{{end}}
+                    </div>
+                    <div>
+                        {{template "states-viewer-link" (dict "Env" .Env "ExecutionArn" .ExecutionArn)}}
+                    </div>
+                </div>
+
+                {{if or .InputBucket .OutputPrefix}}
+                <details class="collapse collapse-arrow border border-base-200 bg-base-100/80">
+                    <summary class="collapse-title text-xs font-medium">Input / Output Files</summary>
+                    {{if .InputBucket}}
+                    <div class="collapse-content space-y-2 text-xs text-base-content/60">
+                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
+                            Input: {{.InputBucket}}/{{.InputKey}}
+                            {{if .InputSize}}<span class="ml-2">({{.InputSize}})</span>{{end}}
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <a class="btn btn-outline btn-xs"
+                               href="/api/s3-download?env={{.Env}}&bucket={{.InputBucket}}&key={{.InputKey}}">
+                                Download Input
+                            </a>
+                        </div>
+                    </div>
+                    {{end}}
+
+                    {{if .OutputPrefix}}
+                    <div class="collapse-content space-y-2 text-xs text-base-content/60">
+                        <div class="break-all font-mono text-[11px] leading-snug rounded-box bg-base-200/70 px-2 py-1">
+                            Output Prefix: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputPrefix}}
+                        </div>
+                        {{if .OutputManifestKey}}
+                        <div class="break-all">
+                            Manifest: {{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}/{{.OutputManifestKey}}
+                            <a class="link link-primary ml-2" href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
+                                Download
+                            </a>
+                        </div>
+                        {{end}}
+                        <form class="flex flex-wrap items-center gap-2"
+                              data-on:submit="@get('/api/s3-prefix-list', {contentType: 'form', openWhenHidden: true, requestCancellation: 'disabled'})"
+                              data-indicator:s3_prefix_loading>
+                            <input type="hidden" name="env" value="{{.Env}}" />
+                            <input type="hidden" name="bucket" value="{{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}" />
+                            <input type="hidden" name="prefix" value="{{.OutputPrefix}}" />
+                            <input type="hidden" name="target_id" value="recent-completed-output-{{idSafe .ExecutionArn}}" />
+                            <button type="submit" class="btn btn-outline btn-xs">
+                                List Output Files
+                            </button>
+                            {{if .OutputManifestKey}}
+                            <a class="btn btn-outline btn-xs"
+                               href="/api/s3-download?env={{.Env}}&bucket={{if .OutputBucket}}{{.OutputBucket}}{{else}}{{.InputBucket}}{{end}}&key={{.OutputManifestKey}}">
+                                Download Manifest
+                            </a>
+                            {{end}}
+                            <span data-show="$s3_prefix_loading" class="inline-flex items-center gap-1 text-[11px]" style="display:none">
+                                <span class="loading loading-spinner loading-xs"></span>
+                                Loading...
+                            </span>
+                        </form>
+                        <div id="recent-completed-output-{{idSafe .ExecutionArn}}" class="mt-2"></div>
+                    </div>
+                    {{end}}
+                </details>
+                {{end}}
+            </div>
+        </details>
+        {{end}}
+    {{else}}
+    <div class="p-4 text-sm text-base-content/60">No completed executions in the last 15 minutes.</div>
+    {{end}}
+</div>
 {{end}}
 
 {{define "record-search-results"}}
@@ -459,7 +549,7 @@
                 }
             ">
             {{range .Failures}}
-            <tr class="hover" data-env="{{.Env}}">
+            <tr class="hover{{if .New}} flash-new{{end}}" data-env="{{.Env}}">
                 <td>
                     <span class="badge badge-ghost badge-sm">
                         {{.Env}}
