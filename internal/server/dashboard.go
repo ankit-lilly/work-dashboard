@@ -30,6 +30,7 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	sse := datastar.NewSSE(w, r)
 	ctx := r.Context()
 
+	// Subscribe to all broadcasters
 	activeCh := s.activeBroadcaster.Subscribe()
 	defer s.activeBroadcaster.Unsubscribe(activeCh)
 
@@ -39,13 +40,26 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	failuresCh := s.failuresBroadcaster.Subscribe()
 	defer s.failuresBroadcaster.Unsubscribe(failuresCh)
 
+	rdsCh := s.rdsBroadcaster.Subscribe()
+	defer s.rdsBroadcaster.Unsubscribe(rdsCh)
+
+	lambdaCh := s.lambdaBroadcaster.Subscribe()
+	defer s.lambdaBroadcaster.Unsubscribe(lambdaCh)
+
 	// Send initial credential error state if present
 	if hasError, errMsg, _ := s.getCredentialError(); hasError {
 		sse.PatchSignals([]byte(fmt.Sprintf(`{"credential_error": true, "credential_error_msg": %q}`, errMsg)))
 	}
 
+	// Send initial signals for all sections
+	sse.PatchSignals([]byte(`{"rds_loading": true, "rds_db_count": 0, "lambda_warnings": 0, "lambda_count": 0}`))
+
+	// Send any cached data immediately
+	s.sendCachedRDSMetrics(sse)
+	s.sendCachedLambdaMetrics(sse)
+
 	// Note: State machines are loaded on initial page render, no SSE update needed
-	//Update different sections via SSE as data comes in.
+	// Update different sections via SSE as data comes in.
 
 	for {
 		select {
@@ -143,6 +157,82 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 					datastar.WithSelector("#recent-failures-list"),
 					datastar.WithMode(datastar.ElementPatchModeInner),
 					datastar.WithUseViewTransitions(false),
+				)
+			}
+
+		case allMetrics, ok := <-rdsCh:
+			if !ok {
+				return
+			}
+
+			// Handle RDS updates
+			sse.PatchSignals([]byte(fmt.Sprintf(`{"rds_loading": false, "rds_db_count": %d}`, len(allMetrics))))
+
+			var buf bytes.Buffer
+			tmpl := s.templateSet("index")
+			if tmpl == nil {
+				return
+			}
+
+			if err := tmpl.ExecuteTemplate(&buf, "rds-metrics", map[string]any{
+				"Metrics": allMetrics,
+			}); err != nil {
+				slog.Error("template render failed", "template", "rds-metrics", "error", err)
+			} else {
+				sse.PatchElements(
+					buf.String(),
+					datastar.WithSelector("#rds-metrics-content"),
+					datastar.WithMode(datastar.ElementPatchModeInner),
+				)
+			}
+
+		case report, ok := <-lambdaCh:
+			if !ok {
+				return
+			}
+
+			// Check for credential errors
+			hasCredError, credMsg, _ := s.getCredentialError()
+			if hasCredError {
+				sse.PatchSignals([]byte(fmt.Sprintf(`{"credential_error": true, "credential_error_msg": %q}`, credMsg)))
+				continue
+			}
+
+			// Handle Lambda updates
+			sse.PatchSignals([]byte(fmt.Sprintf(`{"lambda_warnings": %d, "lambda_count": %d}`,
+				report.WarningCount, len(report.Metrics))))
+
+			tmpl := s.templateSet("index")
+			if tmpl == nil {
+				continue
+			}
+
+			// Render warnings section
+			warnings := make([]*aws.LambdaMetrics, 0)
+			for _, m := range report.Metrics {
+				if m.TimeoutPercent >= aws.TimeoutWarningHigh {
+					warnings = append(warnings, m)
+				}
+			}
+
+			var warningsBuf bytes.Buffer
+			if err := tmpl.ExecuteTemplate(&warningsBuf, "lambda-warnings", map[string]any{
+				"Warnings": warnings,
+			}); err == nil {
+				sse.PatchElements(warningsBuf.String(),
+					datastar.WithSelector("#lambda-warnings-content"),
+					datastar.WithMode(datastar.ElementPatchModeInner),
+				)
+			}
+
+			// Render resources section
+			var resourcesBuf bytes.Buffer
+			if err := tmpl.ExecuteTemplate(&resourcesBuf, "lambda-resources", map[string]any{
+				"Metrics": report.Metrics,
+			}); err == nil {
+				sse.PatchElements(resourcesBuf.String(),
+					datastar.WithSelector("#lambda-resources-content"),
+					datastar.WithMode(datastar.ElementPatchModeInner),
 				)
 			}
 		}
@@ -410,4 +500,111 @@ func (s *Server) fetchStateMachines() ([]StateMachineItem, error) {
 	})
 
 	return items, nil
+}
+
+// sendCachedRDSMetrics sends any cached RDS metrics immediately on SSE connection
+func (s *Server) sendCachedRDSMetrics(sse *datastar.ServerSentEventGenerator) {
+	s.rdsCacheMu.Lock()
+	defer s.rdsCacheMu.Unlock()
+
+	if s.rdsCache == nil || len(s.rdsCache) == 0 {
+		return
+	}
+
+	// Collect all cached metrics
+	var allMetrics []aws.RDSMetric
+	for _, cached := range s.rdsCache {
+		allMetrics = append(allMetrics, cached...)
+	}
+
+	if len(allMetrics) == 0 {
+		return
+	}
+
+	// Update signals
+	sse.PatchSignals([]byte(fmt.Sprintf(`{"rds_loading": false, "rds_db_count": %d}`, len(allMetrics))))
+
+	// Render template
+	tmpl := s.templateSet("index")
+	if tmpl != nil {
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "rds-metrics", map[string]any{
+			"Metrics": allMetrics,
+		}); err == nil {
+			sse.PatchElements(buf.String(),
+				datastar.WithSelector("#rds-metrics-content"),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
+	}
+}
+
+// sendCachedLambdaMetrics sends any cached Lambda metrics immediately on SSE connection
+func (s *Server) sendCachedLambdaMetrics(sse *datastar.ServerSentEventGenerator) {
+	s.lambdaCacheMu.Lock()
+	defer s.lambdaCacheMu.Unlock()
+
+	if len(s.lambdaCache) == 0 {
+		return
+	}
+
+	// Collect all cached metrics
+	var allMetrics []*aws.LambdaMetrics
+	for _, cached := range s.lambdaCache {
+		allMetrics = append(allMetrics, cached.Metrics)
+	}
+
+	if len(allMetrics) == 0 {
+		return
+	}
+
+	// Sort by timeout percentage
+	sort.Slice(allMetrics, func(i, j int) bool {
+		return allMetrics[i].TimeoutPercent > allMetrics[j].TimeoutPercent
+	})
+
+	// Count warnings
+	warningCount := 0
+	for _, m := range allMetrics {
+		if m.TimeoutPercent >= aws.TimeoutWarningHigh {
+			warningCount++
+		}
+	}
+
+	// Update signals
+	signals := fmt.Sprintf(`{"lambda_warnings": %d, "lambda_count": %d}`,
+		warningCount, len(allMetrics))
+	sse.PatchSignals([]byte(signals))
+
+	// Render warnings
+	tmpl := s.templateSet("index")
+	if tmpl != nil {
+		warnings := make([]*aws.LambdaMetrics, 0)
+		for _, m := range allMetrics {
+			if m.TimeoutPercent >= aws.TimeoutWarningHigh {
+				warnings = append(warnings, m)
+			}
+		}
+
+		var warningsBuf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&warningsBuf, "lambda-warnings", map[string]any{
+			"Warnings": warnings,
+		}); err == nil {
+			sse.PatchElements(warningsBuf.String(),
+				datastar.WithSelector("#lambda-warnings-content"),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
+
+		// Render resources
+		var resourcesBuf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&resourcesBuf, "lambda-resources", map[string]any{
+			"Metrics": allMetrics,
+		}); err == nil {
+			sse.PatchElements(resourcesBuf.String(),
+				datastar.WithSelector("#lambda-resources-content"),
+				datastar.WithMode(datastar.ElementPatchModeInner),
+			)
+		}
+	}
 }

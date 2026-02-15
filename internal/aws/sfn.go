@@ -2,6 +2,8 @@ package aws
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math/rand"
 	"strings"
@@ -641,5 +643,133 @@ func getStateNameFromEvent(evByID map[int64]types.HistoryEvent, event types.Hist
 			break
 		}
 	}
+	return ""
+}
+
+// ExtractLambdaFunctionsFromStateMachine parses a Step Function state machine definition
+// and extracts all Lambda function ARNs referenced in the workflow
+func (c *Client) ExtractLambdaFunctionsFromStateMachine(ctx context.Context, stateMachineArn string) ([]string, error) {
+	// Get state machine definition
+	desc, err := c.Sfn.DescribeStateMachine(ctx, &sfn.DescribeStateMachineInput{
+		StateMachineArn: &stateMachineArn,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe state machine: %w", err)
+	}
+
+	if desc.Definition == nil {
+		return []string{}, nil
+	}
+
+	// Parse JSON definition
+	var definition map[string]any
+	if err := json.Unmarshal([]byte(*desc.Definition), &definition); err != nil {
+		return nil, fmt.Errorf("failed to parse state machine definition: %w", err)
+	}
+
+	// Extract Lambda ARNs from states
+	lambdaArns := make(map[string]bool) // Use map to deduplicate
+	extractLambdaArnsFromStates(definition, lambdaArns)
+
+	// Convert to slice
+	result := make([]string, 0, len(lambdaArns))
+	for arn := range lambdaArns {
+		result = append(result, arn)
+	}
+
+	return result, nil
+}
+
+// extractLambdaArnsFromStates recursively walks state machine definition to find Lambda ARNs
+func extractLambdaArnsFromStates(definition map[string]any, lambdaArns map[string]bool) {
+	states, ok := definition["States"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	for _, stateValue := range states {
+		state, ok := stateValue.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		stateType, _ := state["Type"].(string)
+
+		switch stateType {
+		case "Task":
+			// Extract Lambda ARN from Task state
+			if resource, ok := state["Resource"].(string); ok {
+				if arn := extractLambdaArnFromTaskResource(resource, state); arn != "" {
+					lambdaArns[arn] = true
+				}
+			}
+
+		case "Parallel":
+			// Recursively process branches
+			if branches, ok := state["Branches"].([]any); ok {
+				for _, branchValue := range branches {
+					if branch, ok := branchValue.(map[string]any); ok {
+						extractLambdaArnsFromStates(branch, lambdaArns)
+					}
+				}
+			}
+
+		case "Map":
+			// Recursively process iterator
+			if iterator, ok := state["Iterator"].(map[string]any); ok {
+				extractLambdaArnsFromStates(iterator, lambdaArns)
+			}
+			// Also check ItemProcessor for distributed map (newer format)
+			if itemProcessor, ok := state["ItemProcessor"].(map[string]any); ok {
+				if processorConfig, ok := itemProcessor["ProcessorConfig"].(map[string]any); ok {
+					extractLambdaArnsFromStates(processorConfig, lambdaArns)
+				}
+				// Check StartAt and States in ItemProcessor
+				extractLambdaArnsFromStates(itemProcessor, lambdaArns)
+			}
+		}
+	}
+}
+
+// extractLambdaArnFromTaskResource extracts Lambda ARN from various resource formats
+func extractLambdaArnFromTaskResource(resource string, state map[string]any) string {
+	// Format 1: Direct Lambda ARN
+	// "arn:aws:lambda:region:account:function:FunctionName"
+	// "arn:aws:lambda:region:account:function:FunctionName:$LATEST"
+	if strings.Contains(resource, ":lambda:") && strings.Contains(resource, ":function:") {
+		// Remove version/alias suffix if present
+		if idx := strings.LastIndex(resource, ":"); idx != -1 {
+			suffix := resource[idx+1:]
+			// Check if it's a version ($LATEST) or alias
+			if suffix == "$LATEST" || strings.HasPrefix(suffix, "$") {
+				return resource[:idx]
+			}
+		}
+		return resource
+	}
+
+	// Format 2: Lambda invoke API with Parameters.FunctionName
+	// "Resource": "arn:aws:states:::lambda:invoke"
+	if strings.Contains(resource, ":states:") && strings.Contains(resource, ":lambda:invoke") {
+		// Look for FunctionName in Parameters
+		if params, ok := state["Parameters"].(map[string]any); ok {
+			if functionName, ok := params["FunctionName"].(string); ok {
+				// FunctionName could be an ARN or just a name
+				if strings.HasPrefix(functionName, "arn:") {
+					return functionName
+				}
+				// If it's just a name, we can't construct full ARN without account/region
+				// Return as-is and handle in caller
+				return functionName
+			}
+			// Check for FunctionName.$ (dynamic reference)
+			if functionNamePath, ok := params["FunctionName.$"].(string); ok {
+				// This is a JSON path reference, can't statically determine
+				// Skip these for now
+				_ = functionNamePath
+			}
+		}
+	}
+
 	return ""
 }

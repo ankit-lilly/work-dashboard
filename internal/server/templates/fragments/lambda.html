@@ -26,6 +26,11 @@
             Used by: {{range $i, $sfn := .UsedByStepFuncs}}{{if $i}}, {{end}}{{$sfn}}{{end}}
         </div>
         {{end}}
+        {{if not .FirstInvoked.IsZero}}
+        <div class="text-xs mt-1 opacity-75">
+            Data from {{formatTimeLocal .FirstInvoked}} to {{formatTimeLocal .LastInvoked}} ({{.InvocationCount}} invocations)
+        </div>
+        {{end}}
         <div class="text-xs mt-2">
             <strong>Recommendation:</strong> Increase timeout setting or optimize function performance
         </div>
@@ -102,19 +107,39 @@
             </div>
             {{end}}
 
+            <!-- Data Time Range -->
+            {{if not .FirstInvoked.IsZero}}
+            <div class="alert alert-info shadow-sm mb-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="text-xs">
+                    <strong>Metrics Time Range:</strong>
+                    <div class="font-mono mt-1">
+                        <span class="opacity-75">From:</span> {{formatTimeLocal .FirstInvoked}}
+                        <span class="mx-2">→</span>
+                        <span class="opacity-75">To:</span> {{formatTimeLocal .LastInvoked}}
+                    </div>
+                    <div class="mt-1 opacity-75">Based on {{.InvocationCount}} invocation{{if ne .InvocationCount 1}}s{{end}} from active + failed (24h) + completed (1h) executions</div>
+                </div>
+            </div>
+            {{end}}
+
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                 <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Maximum execution time configured for this function">
                     <div class="stat-title text-xs">Timeout Setting</div>
                     <div class="stat-value text-lg">{{.FormatTimeout}}</div>
                     <div class="stat-desc text-xs">{{.GetTimeoutSeconds}}s configured</div>
                 </div>
-                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average duration from recent invocations (active + last 24h failures + last 1h completed, max 100 invocations)">
-                    <div class="stat-title text-xs">
-                        Avg Duration
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 inline opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Duration of the most recent invocation">
+                    <div class="stat-title text-xs">Recent Duration</div>
+                    <div class="stat-value text-lg {{if ge .TimeoutPercent 90.0}}text-error{{else if ge .TimeoutPercent 80.0}}text-warning{{else}}text-success{{end}}">
+                        {{.FormatRecentDuration}}
                     </div>
+                    <div class="stat-desc text-xs">last invoked</div>
+                </div>
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average duration from recent invocations (active + last 24h failures + last 1h completed, max 100 invocations)">
+                    <div class="stat-title text-xs">Avg Duration</div>
                     <div class="stat-value text-lg {{if ge .TimeoutPercent 90.0}}text-error{{else if ge .TimeoutPercent 80.0}}text-warning{{else}}text-success{{end}}">
                         {{.FormatAvgDuration}}
                     </div>
@@ -125,13 +150,37 @@
                     <div class="stat-value text-lg">{{.FormatMaxDuration}}</div>
                     <div class="stat-desc text-xs">peak observed</div>
                 </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Memory allocated to the function">
+                    <div class="stat-title text-xs">Memory Allocated</div>
+                    <div class="stat-value text-lg">{{.MemoryAllocated}}MB</div>
+                    <div class="stat-desc text-xs">configured</div>
+                </div>
+                {{if gt .MemoryRecent 0}}
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Memory used by the most recent invocation">
+                    <div class="stat-title text-xs">Recent Memory</div>
+                    <div class="stat-value text-lg {{if ge .MemoryPercent 90.0}}text-error{{else if ge .MemoryPercent 80.0}}text-warning{{else}}text-success{{end}}">
+                        {{.MemoryRecent}}MB
+                    </div>
+                    <div class="stat-desc text-xs">last invoked</div>
+                </div>
+                {{end}}
                 <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average memory used from recent invocations (active + last 24h failures + last 1h completed, max 50 invocations)">
-                    <div class="stat-title text-xs">Memory Usage</div>
+                    <div class="stat-title text-xs">Avg Memory</div>
                     <div class="stat-value text-lg {{if ge .MemoryPercent 90.0}}text-error{{else if ge .MemoryPercent 80.0}}text-warning{{else}}text-success{{end}}">
                         {{.MemoryUsed}}MB
                     </div>
-                    <div class="stat-desc text-xs">{{printf "%.0f" .MemoryPercent}}% of {{.MemoryAllocated}}MB</div>
+                    <div class="stat-desc text-xs">{{printf "%.0f" .MemoryPercent}}% used</div>
                 </div>
+                {{if gt .MemoryMax 0}}
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Maximum memory used across all recent invocations">
+                    <div class="stat-title text-xs">Peak Memory</div>
+                    <div class="stat-value text-lg">{{.MemoryMax}}MB</div>
+                    <div class="stat-desc text-xs">peak observed</div>
+                </div>
+                {{end}}
             </div>
 
             <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
@@ -139,12 +188,6 @@
                     <div class="text-xs text-base-content/60">Invocations</div>
                     <div class="text-sm font-semibold">{{.InvocationCount}}</div>
                 </div>
-                {{if gt .MemoryMax 0}}
-                <div class="bg-base-200/30 rounded p-2 tooltip" data-tip="Maximum memory used across all recent invocations">
-                    <div class="text-xs text-base-content/60">Peak Memory</div>
-                    <div class="text-sm font-semibold">{{.MemoryMax}}MB</div>
-                </div>
-                {{end}}
                 {{if gt .TimeoutCount 0}}
                 <div class="bg-error/10 rounded p-2 tooltip" data-tip="Number of times this function exceeded its timeout limit">
                     <div class="text-xs text-error/80">Timeouts</div>

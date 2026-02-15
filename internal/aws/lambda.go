@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 )
 
@@ -49,18 +50,20 @@ type LambdaMetrics struct {
 	MemoryAllocated int32   // MB
 	MemoryUsed      int32   // MB (average)
 	MemoryMax       int32   // MB (maximum observed)
+	MemoryRecent    int32   // MB (most recent invocation)
 	MemoryPercent   float64 // percentage of allocated memory used (based on average)
 	InvocationCount int
 	TimeoutCount    int
 	ErrorCount      int
 	UsedByStepFuncs []string // Which Step Functions use this Lambda
 	LastInvoked     time.Time
-	ConfigError     string // Error fetching configuration
+	FirstInvoked    time.Time // Earliest invocation in the data set
+	ConfigError     string    // Error fetching configuration
 }
 
 // GetLambdaMetrics fetches Lambda configuration and calculates timeout metrics
-// Uses hybrid approach: execution history for duration, CloudWatch only for >80% timeout warnings
-func (c *Client) GetLambdaMetrics(ctx context.Context, functionName string, invocations []InvocationRecord, usedByStepFuncs []string) (*LambdaMetrics, error) {
+// Uses CloudWatch Logs Insights to query the last 20 invocations directly
+func (c *Client) GetLambdaMetrics(ctx context.Context, functionName string, usedByStepFuncs []string) (*LambdaMetrics, error) {
 	// Get function configuration for timeout and memory
 	config, err := c.Lambda.GetFunctionConfiguration(ctx, &lambda.GetFunctionConfigurationInput{
 		FunctionName: aws.String(functionName),
@@ -72,7 +75,7 @@ func (c *Client) GetLambdaMetrics(ctx context.Context, functionName string, invo
 			Env:             c.EnvName,
 			FunctionName:    functionName,
 			ConfigError:     err.Error(),
-			InvocationCount: len(invocations),
+			InvocationCount: 0,
 			UsedByStepFuncs: usedByStepFuncs,
 		}, nil
 	}
@@ -81,34 +84,63 @@ func (c *Client) GetLambdaMetrics(ctx context.Context, functionName string, invo
 	memoryAllocated := aws.ToInt32(config.MemorySize)
 	functionArn := aws.ToString(config.FunctionArn)
 
-	// Calculate metrics from invocation records
+	// Get last 20 invocations from CloudWatch Logs
+	invocations, err := c.GetLast20Invocations(ctx, functionName)
+	if err != nil || len(invocations) == 0 {
+		// Return basic metrics with no invocation data
+		slog.Debug("no invocation data from logs", "env", c.EnvName, "function", functionName, "error", err)
+		return &LambdaMetrics{
+			Env:             c.EnvName,
+			FunctionName:    functionName,
+			FunctionArn:     functionArn,
+			Timeout:         timeout,
+			MemoryAllocated: memoryAllocated,
+			InvocationCount: 0,
+			UsedByStepFuncs: usedByStepFuncs,
+		}, nil
+	}
+
+	// Calculate metrics from CloudWatch Logs invocations
 	var totalDuration int64
 	var maxDuration int64
 	var recentDuration int64
-	var timeoutCount int
-	var errorCount int
+	var totalMemory int64
+	var maxMemory int32
+	var recentMemory int32
 	var lastInvoked time.Time
+	var firstInvoked time.Time
 
 	for i, inv := range invocations {
+		// Duration metrics
 		totalDuration += inv.Duration
 		if inv.Duration > maxDuration {
 			maxDuration = inv.Duration
 		}
-		if i == len(invocations)-1 {
+
+		// Memory metrics
+		totalMemory += int64(inv.MemoryUsed)
+		if inv.MemoryUsed > maxMemory {
+			maxMemory = inv.MemoryUsed
+		}
+
+		// Most recent = first in desc order (CloudWatch returns desc by timestamp)
+		if i == 0 {
 			recentDuration = inv.Duration
+			recentMemory = inv.MemoryUsed
 			lastInvoked = inv.Timestamp
 		}
-		if inv.TimedOut {
-			timeoutCount++
-		}
-		if inv.Failed {
-			errorCount++
+
+		// Oldest = last in desc order
+		if i == len(invocations)-1 {
+			firstInvoked = inv.Timestamp
 		}
 	}
 
 	avgDuration := int64(0)
+	avgMemory := int32(0)
 	if len(invocations) > 0 {
 		avgDuration = totalDuration / int64(len(invocations))
+		avgMemory = int32(totalMemory / int64(len(invocations)))
 	}
 
 	// Calculate timeout percentage based on average duration
@@ -118,17 +150,10 @@ func (c *Client) GetLambdaMetrics(ctx context.Context, functionName string, invo
 		timeoutPercent = (float64(avgDuration) / float64(timeoutMillis)) * 100
 	}
 
-	// Fetch memory usage from CloudWatch Logs for recent invocations
-	memoryUsed, memoryMax := int32(0), int32(0)
-	// Skip memory fetch if no invocations yet
-	if !lastInvoked.IsZero() {
-		memoryUsed, memoryMax = c.getMemoryUsageFromLogs(ctx, functionName, lastInvoked)
-	}
-
 	// Calculate memory percentage
 	memoryPercent := 0.0
-	if memoryAllocated > 0 && memoryUsed > 0 {
-		memoryPercent = (float64(memoryUsed) / float64(memoryAllocated)) * 100
+	if memoryAllocated > 0 && avgMemory > 0 {
+		memoryPercent = (float64(avgMemory) / float64(memoryAllocated)) * 100
 	}
 
 	metrics := &LambdaMetrics{
@@ -141,14 +166,16 @@ func (c *Client) GetLambdaMetrics(ctx context.Context, functionName string, invo
 		MaxDuration:     maxDuration,
 		TimeoutPercent:  timeoutPercent,
 		MemoryAllocated: memoryAllocated,
-		MemoryUsed:      memoryUsed,
-		MemoryMax:       memoryMax,
+		MemoryUsed:      avgMemory,
+		MemoryMax:       maxMemory,
+		MemoryRecent:    recentMemory,
 		MemoryPercent:   memoryPercent,
 		InvocationCount: len(invocations),
-		TimeoutCount:    timeoutCount,
-		ErrorCount:      errorCount,
+		TimeoutCount:    0, // Can't determine from logs alone
+		ErrorCount:      0, // Can't determine from logs alone
 		UsedByStepFuncs: usedByStepFuncs,
 		LastInvoked:     lastInvoked,
+		FirstInvoked:    firstInvoked,
 	}
 
 	return metrics, nil
@@ -193,73 +220,9 @@ func (m *LambdaMetrics) FormatTimeout() string {
 	return fmt.Sprintf("%dm%ds", minutes, remainingSeconds)
 }
 
-// getMemoryUsageFromLogs fetches memory usage from CloudWatch Logs
-// Lambda automatically logs: "REPORT RequestId: xxx ... Memory Size: 512 MB Max Memory Used: 128 MB"
-func (c *Client) getMemoryUsageFromLogs(ctx context.Context, functionName string, since time.Time) (avgMemory int32, maxMemory int32) {
-	// Construct log group name (Lambda standard format)
-	logGroupName := fmt.Sprintf("/aws/lambda/%s", functionName)
-
-	// Query last 1 hour or since last invocation
-	startTime := since.Add(-1 * time.Hour).UnixMilli()
-	if since.IsZero() {
-		startTime = time.Now().Add(-1 * time.Hour).UnixMilli()
-	}
-	endTime := time.Now().UnixMilli()
-
-	// Filter for REPORT lines that contain memory usage
-	filterPattern := "[report_type=REPORT, ...]"
-
-	input := &cloudwatchlogs.FilterLogEventsInput{
-		LogGroupName:  aws.String(logGroupName),
-		StartTime:     aws.Int64(startTime),
-		EndTime:       aws.Int64(endTime),
-		FilterPattern: aws.String(filterPattern),
-		Limit:         aws.Int32(50), // Get last 50 invocations for averaging
-	}
-
-	result, err := c.Logs.FilterLogEvents(ctx, input)
-	if err != nil {
-		// Log error but don't fail - memory usage is optional
-		slog.Debug("failed to fetch memory usage from logs", "env", c.EnvName, "function", functionName, "error", err)
-		return 0, 0
-	}
-
-	if len(result.Events) == 0 {
-		return 0, 0
-	}
-
-	// Parse memory usage from log messages
-	var totalMemory int64
-	var maxMem int32
-	count := 0
-
-	for _, event := range result.Events {
-		if event.Message == nil {
-			continue
-		}
-
-		// Parse: "Max Memory Used: 128 MB"
-		message := *event.Message
-		memUsed := parseMemoryFromLogMessage(message)
-		if memUsed > 0 {
-			totalMemory += int64(memUsed)
-			if memUsed > maxMem {
-				maxMem = memUsed
-			}
-			count++
-		}
-	}
-
-	if count == 0 {
-		return 0, 0
-	}
-
-	avgMem := int32(totalMemory / int64(count))
-	return avgMem, maxMem
-}
-
 // parseMemoryFromLogMessage extracts memory usage from Lambda REPORT log line
 // Example: "REPORT RequestId: abc-123 Duration: 1234.56 ms ... Max Memory Used: 128 MB"
+// DEPRECATED: Now using CloudWatch Logs Insights queries instead
 func parseMemoryFromLogMessage(message string) int32 {
 	// Look for "Max Memory Used: XXX MB"
 	idx := strings.Index(message, "Max Memory Used:")
@@ -345,4 +308,119 @@ func FormatDuration(ms int64) string {
 	minutes := int(seconds / 60)
 	remainingSeconds := int(seconds) % 60
 	return fmt.Sprintf("%dm%ds", minutes, remainingSeconds)
+}
+
+// InvocationData represents a single Lambda invocation from CloudWatch Logs
+type InvocationData struct {
+	Timestamp  time.Time
+	Duration   int64 // milliseconds
+	MemoryUsed int32 // MB
+	MemorySize int32 // MB (allocated)
+}
+
+// GetLast20Invocations queries CloudWatch Logs Insights for the last 20 Lambda invocations
+func (c *Client) GetLast20Invocations(ctx context.Context, functionName string) ([]InvocationData, error) {
+	logGroupName := fmt.Sprintf("/aws/lambda/%s", functionName)
+
+	// CloudWatch Logs Insights query for last 20 REPORT lines
+	query := `fields @timestamp, @duration, @maxMemoryUsed, @memorySize
+| filter @type = "REPORT"
+| sort @timestamp desc
+| limit 20`
+
+	// Query last 24 hours
+	startTime := aws.Int64(time.Now().Add(-24 * time.Hour).Unix())
+	endTime := aws.Int64(time.Now().Unix())
+
+	// Start query
+	startResp, err := c.Logs.StartQuery(ctx, &cloudwatchlogs.StartQueryInput{
+		LogGroupName: aws.String(logGroupName),
+		QueryString:  aws.String(query),
+		StartTime:    startTime,
+		EndTime:      endTime,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to start query: %w", err)
+	}
+
+	// Poll for results (with timeout)
+	queryId := startResp.QueryId
+	maxAttempts := 30 // 15 seconds max (30 * 500ms)
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		time.Sleep(500 * time.Millisecond)
+
+		results, err := c.Logs.GetQueryResults(ctx, &cloudwatchlogs.GetQueryResultsInput{
+			QueryId: queryId,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get query results: %w", err)
+		}
+
+		switch results.Status {
+		case "Complete":
+			return parseInvocationResults(results.Results), nil
+		case "Failed", "Cancelled", "Timeout":
+			return nil, fmt.Errorf("query %s", results.Status)
+		case "Running", "Scheduled":
+			// Continue polling
+			continue
+		}
+	}
+
+	return nil, fmt.Errorf("query timed out after %d attempts", maxAttempts)
+}
+
+// parseInvocationResults parses CloudWatch Logs Insights results into InvocationData
+func parseInvocationResults(results [][]cwltypes.ResultField) []InvocationData {
+	invocations := make([]InvocationData, 0, len(results))
+
+	for _, result := range results {
+		inv := InvocationData{}
+		hasData := false
+
+		for _, field := range result {
+			if field.Field == nil || field.Value == nil {
+				continue
+			}
+
+			fieldName := *field.Field
+			fieldValue := *field.Value
+
+			switch fieldName {
+			case "@timestamp":
+				// Parse timestamp: "2024-01-15 10:30:45.123"
+				if t, err := time.Parse("2006-01-02 15:04:05.000", fieldValue); err == nil {
+					inv.Timestamp = t
+					hasData = true
+				}
+			case "@duration":
+				// Duration in milliseconds
+				var duration float64
+				if _, err := fmt.Sscanf(fieldValue, "%f", &duration); err == nil {
+					inv.Duration = int64(duration)
+					hasData = true
+				}
+			case "@maxMemoryUsed":
+				// Memory used in bytes (CloudWatch returns bytes, convert to MB)
+				var memUsedBytes int64
+				if _, err := fmt.Sscanf(fieldValue, "%d", &memUsedBytes); err == nil {
+					inv.MemoryUsed = int32(memUsedBytes / (1024 * 1024)) // Convert bytes to MB
+					hasData = true
+				}
+			case "@memorySize":
+				// Allocated memory in bytes (CloudWatch returns bytes, convert to MB)
+				var memSizeBytes int64
+				if _, err := fmt.Sscanf(fieldValue, "%d", &memSizeBytes); err == nil {
+					inv.MemorySize = int32(memSizeBytes / (1024 * 1024)) // Convert bytes to MB
+					hasData = true
+				}
+			}
+		}
+
+		if hasData {
+			invocations = append(invocations, inv)
+		}
+	}
+
+	return invocations
 }

@@ -42,7 +42,7 @@ type Server struct {
 	rdsCacheAt map[string]time.Time
 
 	resourceRegistryMu sync.RWMutex
-	resourceRegistry   *ResourceRegistry
+	lambdaRegistry     *LambdaRegistry
 
 	lambdaCacheMu sync.Mutex
 	lambdaCache   map[string]cachedLambdaMetrics

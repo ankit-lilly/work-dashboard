@@ -15,21 +15,19 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
-// ResourceRegistry tracks discovered Lambda functions from Step Function executions
-type ResourceRegistry struct {
+// LambdaRegistry tracks discovered Lambda functions from Step Function state machine definitions
+type LambdaRegistry struct {
 	mu              sync.RWMutex
-	lambdaFunctions map[string]*DiscoveredLambda // key: env:functionName
-	lastUpdated     time.Time
+	lambdaFunctions map[string]*LambdaFunction // key: env:functionName
+	lastDiscovery   time.Time
 }
 
-// DiscoveredLambda represents a Lambda function discovered from Step Function execution history
-type DiscoveredLambda struct {
+// LambdaFunction represents a Lambda function discovered from Step Function definitions
+type LambdaFunction struct {
 	Env             string
 	FunctionName    string
 	FunctionArn     string
-	Invocations     []aws.InvocationRecord
-	UsedByStepFuncs map[string]bool // Set of Step Function names
-	LastSeen        time.Time
+	UsedByStepFuncs []string // List of Step Function names
 }
 
 // LambdaReport contains all Lambda metrics for broadcasting
@@ -45,109 +43,100 @@ type cachedLambdaMetrics struct {
 	FetchedAt time.Time
 }
 
-// updateResourceRegistry discovers Lambda functions from recent Step Function executions
-func (s *Server) updateResourceRegistry(ctx context.Context) error {
+// discoverLambdaFunctions discovers Lambda functions from Step Function state machine definitions
+// This runs periodically (every 15 minutes) since definitions don't change often
+func (s *Server) discoverLambdaFunctions(ctx context.Context) error {
+	now := time.Now()
+
+	// Check if we need to run discovery (15 minute cache)
 	s.resourceRegistryMu.Lock()
-	defer s.resourceRegistryMu.Unlock()
+	if s.lambdaRegistry != nil && now.Sub(s.lambdaRegistry.lastDiscovery) < 15*time.Minute {
+		s.resourceRegistryMu.Unlock()
+		return nil // Skip - definitions haven't changed
+	}
+	s.resourceRegistryMu.Unlock()
 
-	if s.resourceRegistry == nil {
-		s.resourceRegistry = &ResourceRegistry{
-			lambdaFunctions: make(map[string]*DiscoveredLambda),
-		}
+	slog.Info("lambda discovery: starting discovery from state machine definitions")
+
+	registry := &LambdaRegistry{
+		lambdaFunctions: make(map[string]*LambdaFunction),
+		lastDiscovery:   now,
 	}
 
-	// Collect all recent executions (active + failures + completed)
-	var allExecutions []aws.Execution
+	discoveredCount := 0
 
-	// Get active executions from cache
-	s.activeCacheMu.Lock()
-	for _, execs := range s.activeCache {
-		allExecutions = append(allExecutions, execs...)
-	}
-	s.activeCacheMu.Unlock()
-
-	// Get recent failures (last 24h)
+	// For each AWS client (environment)
 	for _, client := range s.awsManager.Clients {
-		failures, err := client.ListRecentFailures(ctx)
+		// List all state machines
+		stateMachines, err := client.ListFilteredStateMachines(ctx, 1*time.Hour)
 		if err != nil {
 			if aws.IsCredentialError(err) {
 				continue
 			}
-			slog.Warn("failed to list failures for lambda discovery", "env", client.EnvName, "error", err)
+			slog.Warn("failed to list state machines for lambda discovery", "env", client.EnvName, "error", err)
 			continue
 		}
-		allExecutions = append(allExecutions, failures...)
-	}
 
-	// Get recent completed executions (last 1 hour)
-	cutoff := time.Now().Add(-1 * time.Hour)
-	for _, client := range s.awsManager.Clients {
-		completed, err := client.ListRecentCompleted(ctx, cutoff)
-		if err != nil {
-			if aws.IsCredentialError(err) {
+		slog.Debug("lambda discovery: processing state machines", "env", client.EnvName, "count", len(stateMachines))
+
+		// Extract Lambda ARNs from each state machine definition
+		for _, sm := range stateMachines {
+			lambdaArns, err := client.ExtractLambdaFunctionsFromStateMachine(ctx, *sm.StateMachineArn)
+			if err != nil {
+				slog.Debug("failed to extract lambdas from state machine", "env", client.EnvName, "sm", *sm.Name, "error", err)
 				continue
 			}
-			slog.Warn("failed to list completed for lambda discovery", "env", client.EnvName, "error", err)
-			continue
-		}
-		allExecutions = append(allExecutions, completed...)
-	}
 
-	// Extract Lambda resources from execution histories
-	for _, exec := range allExecutions {
-		client := s.awsManager.Clients[exec.Env]
-		if client == nil {
-			continue
-		}
+			if len(lambdaArns) > 0 {
+				slog.Debug("lambda discovery: extracted lambdas from state machine", "env", client.EnvName, "sm", *sm.Name, "lambda_count", len(lambdaArns))
+				discoveredCount += len(lambdaArns)
+			}
 
-		resources, err := client.ExtractLambdaResourcesFromExecution(ctx, exec.ExecutionArn, exec.Name)
-		if err != nil {
-			slog.Debug("failed to extract lambda resources", "env", exec.Env, "execution", exec.ExecutionArn, "error", err)
-			continue
-		}
-
-		// Merge resources into registry
-		for funcName, resource := range resources {
-			key := fmt.Sprintf("%s:%s", exec.Env, funcName)
-
-			existing, ok := s.resourceRegistry.lambdaFunctions[key]
-			if !ok {
-				// New Lambda discovered
-				existing = &DiscoveredLambda{
-					Env:             exec.Env,
-					FunctionName:    funcName,
-					FunctionArn:     resource.FunctionArn,
-					Invocations:     []aws.InvocationRecord{},
-					UsedByStepFuncs: make(map[string]bool),
-					LastSeen:        time.Now(),
+			// Add each Lambda to the registry
+			for _, arn := range lambdaArns {
+				funcName := aws.GetFunctionNameFromArn(arn)
+				if funcName == "" {
+					funcName = arn // Use as-is if can't extract name
 				}
-				s.resourceRegistry.lambdaFunctions[key] = existing
-			}
 
-			// Update invocations (keep last 100 per function)
-			existing.Invocations = append(existing.Invocations, resource.Invocations...)
-			if len(existing.Invocations) > 100 {
-				// Keep most recent 100
-				sort.Slice(existing.Invocations, func(i, j int) bool {
-					return existing.Invocations[i].Timestamp.After(existing.Invocations[j].Timestamp)
-				})
-				existing.Invocations = existing.Invocations[:100]
-			}
+				key := fmt.Sprintf("%s:%s", client.EnvName, funcName)
 
-			// Track which Step Function uses this Lambda
-			existing.UsedByStepFuncs[exec.Name] = true
-			existing.LastSeen = time.Now()
+				if existing, ok := registry.lambdaFunctions[key]; ok {
+					// Add this Step Function to the list
+					existing.UsedByStepFuncs = append(existing.UsedByStepFuncs, *sm.Name)
+				} else {
+					// Create new entry
+					registry.lambdaFunctions[key] = &LambdaFunction{
+						Env:             client.EnvName,
+						FunctionName:    funcName,
+						FunctionArn:     arn,
+						UsedByStepFuncs: []string{*sm.Name},
+					}
+				}
+			}
 		}
 	}
 
-	s.resourceRegistry.lastUpdated = time.Now()
+	totalLambdas := len(registry.lambdaFunctions)
+	slog.Info("lambda discovery: completed", "total_lambdas", totalLambdas, "total_discovered", discoveredCount)
+
+	// Update the registry
+	s.resourceRegistryMu.Lock()
+	s.lambdaRegistry = registry
+	s.resourceRegistryMu.Unlock()
+
 	return nil
 }
 
 // fetchLambdaMetrics fetches Lambda metrics with adaptive polling and per-function caching
 func (s *Server) fetchLambdaMetrics() (*LambdaReport, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+
+	// Discover Lambda functions from state machine definitions (every 15 min)
+	if err := s.discoverLambdaFunctions(ctx); err != nil {
+		slog.Warn("failed to discover lambda functions", "error", err)
+	}
 
 	// Determine polling interval based on active executions
 	hasActiveExecs := s.getActiveExecutionsCount() > 0
@@ -156,19 +145,14 @@ func (s *Server) fetchLambdaMetrics() (*LambdaReport, error) {
 		interval = 1 * time.Minute // Active interval
 	}
 
-	// Update resource registry from recent executions
-	if err := s.updateResourceRegistry(ctx); err != nil {
-		slog.Warn("failed to update resource registry", "error", err)
-	}
-
 	// Collect metrics for each discovered Lambda
 	var allMetrics []*aws.LambdaMetrics
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4) // Limit concurrent Lambda API calls
+	sem := make(chan struct{}, 10) // Limit concurrent Lambda API calls
 
 	s.resourceRegistryMu.RLock()
-	if s.resourceRegistry == nil || len(s.resourceRegistry.lambdaFunctions) == 0 {
+	if s.lambdaRegistry == nil || len(s.lambdaRegistry.lambdaFunctions) == 0 {
 		s.resourceRegistryMu.RUnlock()
 		// No Lambdas discovered yet
 		return &LambdaReport{
@@ -178,13 +162,20 @@ func (s *Server) fetchLambdaMetrics() (*LambdaReport, error) {
 		}, nil
 	}
 
-	for key, lambda := range s.resourceRegistry.lambdaFunctions {
+	totalLambdas := len(s.lambdaRegistry.lambdaFunctions)
+	slog.Info("fetching lambda metrics", "total_lambdas", totalLambdas, "interval", interval)
+
+	cachedCount := 0
+	fetchCount := 0
+
+	for key, lambdaFunc := range s.lambdaRegistry.lambdaFunctions {
 		// Check cache first
 		now := time.Now()
 		s.lambdaCacheMu.Lock()
 		if cached, ok := s.lambdaCache[key]; ok {
 			if now.Sub(cached.FetchedAt) < interval {
 				allMetrics = append(allMetrics, cached.Metrics)
+				cachedCount++
 				s.lambdaCacheMu.Unlock()
 				continue
 			}
@@ -192,27 +183,22 @@ func (s *Server) fetchLambdaMetrics() (*LambdaReport, error) {
 		s.lambdaCacheMu.Unlock()
 
 		// Fetch fresh metrics
+		fetchCount++
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(lam *DiscoveredLambda, cacheKey string) {
+		go func(lf *LambdaFunction, cacheKey string) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			client := s.awsManager.Clients[lam.Env]
+			client := s.awsManager.Clients[lf.Env]
 			if client == nil {
 				return
 			}
 
-			// Convert UsedByStepFuncs map to slice
-			usedBy := make([]string, 0, len(lam.UsedByStepFuncs))
-			for sfn := range lam.UsedByStepFuncs {
-				usedBy = append(usedBy, sfn)
-			}
-			sort.Strings(usedBy)
-
-			metrics, err := client.GetLambdaMetrics(ctx, lam.FunctionName, lam.Invocations, usedBy)
+			// Fetch metrics using CloudWatch Logs Insights (last 20 invocations)
+			metrics, err := client.GetLambdaMetrics(ctx, lf.FunctionName, lf.UsedByStepFuncs)
 			if err != nil {
-				slog.Debug("failed to get lambda metrics", "env", lam.Env, "function", lam.FunctionName, "error", err)
+				slog.Debug("failed to get lambda metrics", "env", lf.Env, "function", lf.FunctionName, "error", err)
 				return
 			}
 
@@ -227,11 +213,13 @@ func (s *Server) fetchLambdaMetrics() (*LambdaReport, error) {
 			mu.Lock()
 			allMetrics = append(allMetrics, metrics)
 			mu.Unlock()
-		}(lambda, key)
+		}(lambdaFunc, key)
 	}
 	s.resourceRegistryMu.RUnlock()
 
 	wg.Wait()
+
+	slog.Info("lambda metrics fetch complete", "cached", cachedCount, "fetched", fetchCount, "total", len(allMetrics))
 
 	// Sort by timeout percentage (highest first)
 	sort.Slice(allMetrics, func(i, j int) bool {
@@ -263,6 +251,9 @@ func (s *Server) handleLambdaUpdates(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial loading state
 	sse.PatchSignals([]byte(`{"lambda_warnings": 0, "lambda_count": 0}`))
+
+	// Immediately send any cached Lambda metrics
+	s.sendCachedLambdaMetrics(sse)
 
 	for {
 		select {
