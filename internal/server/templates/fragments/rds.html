@@ -117,17 +117,29 @@
                                         <th>DB Load (AAS)</th>
                                         <th>Calls/sec</th>
                                         <th>Avg Latency</th>
+                                        <th></th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {{range .TopQueries}}
+                                    {{range $idx, $query := .TopQueries}}
                                     <tr>
                                         <td class="font-mono text-[10px] max-w-md break-words">
-                                            {{truncate .QueryText 150}}
+                                            {{truncate $query.QueryText 150}}
                                         </td>
-                                        <td class="text-xs">{{printf "%.2f" .DBLoad}}</td>
-                                        <td class="text-xs">{{printf "%.1f" .CallsPerSec}}</td>
-                                        <td class="text-xs">{{printf "%.1f" .AvgLatencyMs}}ms</td>
+                                        <td class="text-xs">{{printf "%.2f" $query.DBLoad}}</td>
+                                        <td class="text-xs">{{printf "%.1f" $query.CallsPerSec}}</td>
+                                        <td class="text-xs">{{printf "%.1f" $query.AvgLatencyMs}}ms</td>
+                                        <td>
+                                            <button class="btn btn-ghost btn-xs"
+                                                    type="button"
+                                                    data-on:click="$rds_query_db_load = {{$query.DBLoad}}; $rds_query_calls_per_sec = {{$query.CallsPerSec}}; $rds_query_avg_latency = {{$query.AvgLatencyMs}}; $rds_query_text = `{{$query.QueryText}}`; $rds_query_modal_open = true; event.stopPropagation();">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                </svg>
+                                                View
+                                            </button>
+                                        </td>
                                     </tr>
                                     {{end}}
                                 </tbody>

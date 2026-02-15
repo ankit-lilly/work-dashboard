@@ -31,6 +31,7 @@ type Server struct {
 	stateMachinesBroadcaster *broadcaster.Broadcaster[[]StateMachineItem]
 	completedBroadcaster     *broadcaster.Broadcaster[[]aws.Execution]
 	rdsBroadcaster           *broadcaster.Broadcaster[[]aws.RDSMetric]
+	lambdaBroadcaster        *broadcaster.Broadcaster[*LambdaReport]
 
 	activeCacheMu sync.Mutex
 	activeCache   map[string][]aws.Execution
@@ -39,6 +40,12 @@ type Server struct {
 	rdsCacheMu sync.Mutex
 	rdsCache   map[string][]aws.RDSMetric
 	rdsCacheAt map[string]time.Time
+
+	resourceRegistryMu sync.RWMutex
+	resourceRegistry   *ResourceRegistry
+
+	lambdaCacheMu sync.Mutex
+	lambdaCache   map[string]cachedLambdaMetrics
 
 	jokeMu      sync.Mutex
 	chuckJoke   string
@@ -90,6 +97,7 @@ func NewServer(awsManager *aws.ClientManager, staticFS fs.FS, cfg *config.Config
 		activeCacheAt:        make(map[string]time.Time),
 		rdsCache:             make(map[string][]aws.RDSMetric),
 		rdsCacheAt:           make(map[string]time.Time),
+		lambdaCache:          make(map[string]cachedLambdaMetrics),
 		searchStates:         make(map[string]*searchState),
 		searchStatesTTL:      searchTTL,
 		seenActive:           make(map[string]time.Time),
@@ -111,6 +119,7 @@ func (s *Server) initBroadcasters() {
 	stateMachinesInterval := 10 * time.Minute
 	completedInterval := 60 * time.Second
 	rdsInterval := 30 * time.Second
+	lambdaInterval := 60 * time.Second
 	if s.cfg != nil {
 		activeInterval = s.cfg.Polling.ActiveInterval
 		failuresInterval = s.cfg.Polling.FailuresInterval
@@ -120,12 +129,13 @@ func (s *Server) initBroadcasters() {
 	// Keep completed + failures responsive to active updates.
 	completedInterval = activeInterval
 	failuresInterval = activeInterval
-	slog.Info("polling intervals", "active", activeInterval, "failures", failuresInterval, "state_machines", stateMachinesInterval, "completed", completedInterval, "rds", rdsInterval)
+	slog.Info("polling intervals", "active", activeInterval, "failures", failuresInterval, "state_machines", stateMachinesInterval, "completed", completedInterval, "rds", rdsInterval, "lambda", lambdaInterval)
 	s.activeBroadcaster = broadcaster.NewBroadcaster(s.fetchActiveExecutions, activeInterval, "active-executions")
 	s.failuresBroadcaster = broadcaster.NewBroadcaster(s.fetchRecentFailures, failuresInterval, "recent-failures")
 	s.stateMachinesBroadcaster = broadcaster.NewBroadcaster(s.fetchStateMachines, stateMachinesInterval, "state-machines")
 	s.completedBroadcaster = broadcaster.NewBroadcaster(s.fetchRecentCompleted, completedInterval, "recent-completed")
 	s.rdsBroadcaster = broadcaster.NewBroadcaster(s.fetchRDSMetrics, rdsInterval, "rds-metrics")
+	s.lambdaBroadcaster = broadcaster.NewBroadcaster(s.fetchLambdaMetrics, lambdaInterval, "lambda-metrics")
 }
 
 func (s *Server) parseTemplates() {

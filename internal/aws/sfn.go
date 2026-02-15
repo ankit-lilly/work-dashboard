@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	"github.com/aws/aws-sdk-go-v2/service/sfn/types"
 )
@@ -490,4 +491,155 @@ func errorTypeOrDefault(errorType string) string {
 		return "Execution Failed"
 	}
 	return errorType
+}
+
+// lambdaInvocation tracks a Lambda invocation during execution history parsing
+type lambdaInvocation struct {
+	functionArn string
+	stateName   string
+	startTime   *time.Time
+	endTime     *time.Time
+	timedOut    bool
+	failed      bool
+}
+
+// ExtractLambdaResourcesFromExecution extracts Lambda function ARNs and invocation details from execution history
+func (c *Client) ExtractLambdaResourcesFromExecution(ctx context.Context, executionArn string, stateMachineName string) (map[string]*LambdaResource, error) {
+	history, err := c.Sfn.GetExecutionHistory(ctx, &sfn.GetExecutionHistoryInput{
+		ExecutionArn: aws.String(executionArn),
+		MaxResults:   1000,
+		ReverseOrder: false,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resources := make(map[string]*LambdaResource)
+
+	// Map event IDs to events for tracking state relationships
+	evByID := make(map[int64]types.HistoryEvent)
+	for _, ev := range history.Events {
+		evByID[ev.Id] = ev
+	}
+
+	// Track Lambda invocations
+	invocations := make(map[int64]*lambdaInvocation) // event ID -> invocation
+
+	for _, event := range history.Events {
+		switch event.Type {
+		case types.HistoryEventTypeLambdaFunctionScheduled:
+			if d := event.LambdaFunctionScheduledEventDetails; d != nil && d.Resource != nil {
+				functionName, ok := ExtractLambdaArnFromResource(*d.Resource)
+				if ok {
+					invocations[event.Id] = &lambdaInvocation{
+						functionArn: *d.Resource,
+						stateName:   getStateNameFromEvent(evByID, event),
+						startTime:   event.Timestamp,
+					}
+
+					if _, exists := resources[functionName]; !exists {
+						resources[functionName] = &LambdaResource{
+							FunctionName: functionName,
+							FunctionArn:  *d.Resource,
+							Invocations:  []InvocationRecord{},
+							LastSeen:     time.Now(),
+						}
+					}
+				}
+			}
+
+		case types.HistoryEventTypeLambdaFunctionSucceeded:
+			if d := event.LambdaFunctionSucceededEventDetails; d != nil {
+				// Find the corresponding scheduled event
+				inv := findLambdaInvocationByPreviousEvent(invocations, evByID, event.PreviousEventId)
+				if inv != nil {
+					inv.endTime = event.Timestamp
+				}
+			}
+
+		case types.HistoryEventTypeLambdaFunctionFailed:
+			if d := event.LambdaFunctionFailedEventDetails; d != nil {
+				inv := findLambdaInvocationByPreviousEvent(invocations, evByID, event.PreviousEventId)
+				if inv != nil {
+					inv.endTime = event.Timestamp
+					inv.failed = true
+				}
+			}
+
+		case types.HistoryEventTypeLambdaFunctionTimedOut:
+			if d := event.LambdaFunctionTimedOutEventDetails; d != nil {
+				inv := findLambdaInvocationByPreviousEvent(invocations, evByID, event.PreviousEventId)
+				if inv != nil {
+					inv.endTime = event.Timestamp
+					inv.timedOut = true
+				}
+			}
+		}
+	}
+
+	// Convert invocations to records
+	for _, inv := range invocations {
+		if inv.startTime == nil {
+			continue
+		}
+
+		functionName, ok := ExtractLambdaArnFromResource(inv.functionArn)
+		if !ok {
+			continue
+		}
+
+		duration := int64(0)
+		if inv.endTime != nil {
+			duration = inv.endTime.Sub(*inv.startTime).Milliseconds()
+		}
+
+		record := InvocationRecord{
+			ExecutionArn: executionArn,
+			StateName:    inv.stateName,
+			Duration:     duration,
+			TimedOut:     inv.timedOut,
+			Failed:       inv.failed,
+			Timestamp:    *inv.startTime,
+		}
+
+		if res, exists := resources[functionName]; exists {
+			res.Invocations = append(res.Invocations, record)
+			res.LastSeen = time.Now()
+		}
+	}
+
+	return resources, nil
+}
+
+// Helper function to find Lambda invocation by walking back through previous events
+func findLambdaInvocationByPreviousEvent(invocations map[int64]*lambdaInvocation, evByID map[int64]types.HistoryEvent, prevID int64) *lambdaInvocation {
+	// Walk back through previous events to find the scheduled event
+	for prevID != 0 {
+		if inv, ok := invocations[prevID]; ok {
+			return inv
+		}
+		if prevEvent, ok := evByID[prevID]; ok {
+			prevID = prevEvent.PreviousEventId
+		} else {
+			break
+		}
+	}
+	return nil
+}
+
+// Helper function to extract state name from event context
+func getStateNameFromEvent(evByID map[int64]types.HistoryEvent, event types.HistoryEvent) string {
+	// Walk back to find the state entered event
+	prevID := event.PreviousEventId
+	for prevID != 0 {
+		if prevEvent, ok := evByID[prevID]; ok {
+			if prevEvent.StateEnteredEventDetails != nil && prevEvent.StateEnteredEventDetails.Name != nil {
+				return *prevEvent.StateEnteredEventDetails.Name
+			}
+			prevID = prevEvent.PreviousEventId
+		} else {
+			break
+		}
+	}
+	return ""
 }

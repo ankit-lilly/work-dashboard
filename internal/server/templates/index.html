@@ -21,9 +21,17 @@
          rdsEnv: 'all',
          selectedRdsDb: '',
          rds_loading: false,
-         rds_db_count: 0
+         rds_db_count: 0,
+         rds_query_modal_open: false,
+         rds_query_db_load: 0,
+         rds_query_calls_per_sec: 0,
+         rds_query_avg_latency: 0,
+         rds_query_text: '',
+         lambda_warnings: 0,
+         lambda_count: 0,
+         lambdaEnv: 'all'
      }"
-     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'}); @get('/api/rds-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
+     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'}); @get('/api/rds-updates', {openWhenHidden: true, requestCancellation: 'disabled'}); @get('/api/lambda-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
 
     <!-- AWS Credential Error Banner -->
     <div class="mb-4" data-show="$credential_error">
@@ -241,6 +249,69 @@
                             </svg>
                             <div>Waiting for RDS data...</div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </details>
+    </section>
+
+    <!-- Lambda Functions -->
+    <section>
+        <details class="collapse collapse-arrow bg-base-100 border border-base-300 shadow-sm" open data-preserve-attr="open">
+            <summary class="collapse-title min-h-0 py-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold">Lambda Functions</h2>
+                        <button type="button" class="btn btn-circle btn-ghost btn-xs tooltip tooltip-bottom"
+                                data-tip="Monitors Lambda functions discovered from Step Function executions. Shows timeout usage and performance metrics."
+                                aria-label="Lambda monitoring info"
+                                onclick="event.stopPropagation()">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </button>
+                        <span class="badge badge-sm badge-ghost tooltip tooltip-bottom" data-tip="Functions are automatically discovered as Step Functions execute">Discovered from executions</span>
+                        <span class="badge badge-error badge-sm" data-show="$lambda_warnings > 0">
+                            <span data-text="$lambda_warnings"></span> Warning<span data-show="$lambda_warnings > 1">s</span>
+                        </span>
+                    </div>
+                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                        <select id="lambda-env" aria-label="Filter environment"
+                            class="select select-sm select-bordered join-item"
+                            data-bind="lambdaEnv">
+                            <option value="all">All Envs</option>
+                            <option value="dev">Dev</option>
+                            <option value="qa">QA</option>
+                            <option value="prod">Prod</option>
+                        </select>
+                    </div>
+                </div>
+            </summary>
+            <div class="collapse-content pt-0">
+                <!-- Warning Section -->
+                <div id="lambda-warnings-section" class="mb-4" data-show="$lambda_warnings > 0">
+                    <div class="divider divider-error text-xs my-2">TIMEOUT WARNINGS</div>
+                    <div id="lambda-warnings-content">
+                        <div class="text-sm text-base-content/60 italic p-2">
+                            Loading warnings...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- All Resources -->
+                <div class="divider text-xs my-2">
+                    ALL LAMBDA FUNCTIONS
+                    <span class="badge badge-sm badge-ghost ml-2 tooltip tooltip-bottom"
+                          data-tip="Metrics based on recent invocations: active executions + last 24h failures + last 1h completed (max 100 per function)"
+                          data-text="$lambda_count > 0 ? $lambda_count : ''"></span>
+                </div>
+                <div id="lambda-resources-content" class="max-h-[50vh] overflow-y-auto">
+                    <div class="py-10 text-center text-base-content/60 italic text-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                        </svg>
+                        <div>Discovering Lambda functions...</div>
+                        <div class="text-xs mt-2">Functions will appear as Step Functions execute</div>
                     </div>
                 </div>
             </div>
@@ -466,6 +537,70 @@
     </div>
     <form method="dialog" class="modal-backdrop">
         <button data-on:click="$rds_info_modal_open = false">close</button>
+    </form>
+</dialog>
+
+<!-- RDS Query Details Modal -->
+<dialog class="modal" data-class="{'modal-open': $rds_query_modal_open}">
+    <div class="modal-box max-w-4xl">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+                    aria-label="Close"
+                    data-on:click="$rds_query_modal_open = false">✕</button>
+        </form>
+        <h3 class="font-bold text-lg mb-4">Query Details</h3>
+
+        <!-- Query Stats -->
+        <div class="grid grid-cols-3 gap-3 mb-4">
+            <div class="stat bg-base-200/50 rounded-lg p-3">
+                <div class="stat-title text-xs">DB Load</div>
+                <div class="stat-value text-lg" data-text="$rds_query_db_load.toFixed(2)"></div>
+                <div class="stat-desc text-xs">AAS</div>
+            </div>
+            <div class="stat bg-base-200/50 rounded-lg p-3">
+                <div class="stat-title text-xs">Calls/sec</div>
+                <div class="stat-value text-lg" data-text="$rds_query_calls_per_sec.toFixed(1)"></div>
+            </div>
+            <div class="stat bg-base-200/50 rounded-lg p-3">
+                <div class="stat-title text-xs">Avg Latency</div>
+                <div class="stat-value text-lg" data-text="$rds_query_avg_latency.toFixed(1) + 'ms'"></div>
+            </div>
+        </div>
+
+        <!-- Full Query Text -->
+        <div class="mb-4">
+            <div class="flex items-center justify-between mb-2">
+                <label class="text-sm font-semibold">SQL Query</label>
+                <button class="btn btn-xs btn-ghost"
+                        data-on:click="navigator.clipboard.writeText($rds_query_text); $copyButtonText = 'Copied!'; setTimeout(() => $copyButtonText = 'Copy', 2000)"
+                        data-text="$copyButtonText || 'Copy'">
+                </button>
+            </div>
+            <div class="mockup-code text-xs max-h-96 overflow-y-auto">
+                <pre class="px-4"><code data-text="$rds_query_text"></code></pre>
+            </div>
+        </div>
+
+        <!-- Performance Tips -->
+        <div class="alert alert-warning text-xs" data-show="$rds_query_avg_latency >= 150.0">
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+                <div class="font-semibold">High Latency Detected</div>
+                <div class="text-xs mt-1">
+                    Consider optimizing this query:
+                    <ul class="list-disc list-inside mt-1 ml-2">
+                        <li>Add indexes on frequently filtered columns</li>
+                        <li>Run <code class="bg-base-content/20 px-1 py-0.5 rounded">EXPLAIN ANALYZE</code> to review execution plan</li>
+                        <li>Check for sequential scans that could be indexed</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button data-on:click="$rds_query_modal_open = false">close</button>
     </form>
 </dialog>
 {{end}}

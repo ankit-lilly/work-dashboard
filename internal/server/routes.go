@@ -23,6 +23,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticRoot))))
 	mux.HandleFunc("/api/dashboard-updates", s.handleDashboardUpdates)
 	mux.HandleFunc("/api/rds-updates", s.handleRDSUpdates)
+	mux.HandleFunc("/api/lambda-updates", s.handleLambdaUpdates)
 	mux.HandleFunc("/api/record-search", s.handleRecordSearch)
 	mux.HandleFunc("/api/record-search-cancel", s.handleRecordSearchCancel)
 	mux.HandleFunc("/api/state-machine-executions", s.handleStateMachineExecutions)

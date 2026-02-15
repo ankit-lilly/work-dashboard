@@ -1,0 +1,192 @@
+{{define "lambda-warnings"}}
+{{if .Warnings}}
+{{range .Warnings}}
+<div class="alert alert-error shadow-sm mb-2"
+     data-show="$lambdaEnv == 'all' || $lambdaEnv == ('{{.Env}}'.includes(':') ? '{{.Env}}'.split(':')[0] : '{{.Env}}')">>>
+    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+    </svg>
+    <div class="flex-1">
+        <div class="flex items-center gap-2">
+            <span class="badge badge-ghost badge-sm">{{.Env}}</span>
+            <span class="font-mono font-semibold text-sm">{{.FunctionName}}</span>
+        </div>
+        <div class="text-sm mt-1">
+            ⚠️ <strong>{{printf "%.0f" .TimeoutPercent}}%</strong> of timeout limit
+            <span class="opacity-75 tooltip tooltip-bottom" data-tip="Based on recent invocations from Step Function executions (active + last 24h failures + last 1h completed)">({{.FormatAvgDuration}} avg / {{.FormatTimeout}} timeout)</span>
+        </div>
+        {{if ge .MemoryPercent 90.0}}
+        <div class="text-sm mt-1">
+            ⚠️ <strong>{{printf "%.0f" .MemoryPercent}}%</strong> of allocated memory
+            <span class="opacity-75">({{.MemoryUsed}}MB avg / {{.MemoryAllocated}}MB allocated)</span>
+        </div>
+        {{end}}
+        {{if .UsedByStepFuncs}}
+        <div class="text-xs mt-1 opacity-75">
+            Used by: {{range $i, $sfn := .UsedByStepFuncs}}{{if $i}}, {{end}}{{$sfn}}{{end}}
+        </div>
+        {{end}}
+        <div class="text-xs mt-2">
+            <strong>Recommendation:</strong> Increase timeout setting or optimize function performance
+        </div>
+        {{if .ConfigError}}
+        <div class="text-xs mt-1 text-warning">
+            Note: Configuration fetch failed - {{.ConfigError}}
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+{{else}}
+<div class="text-sm text-base-content/60 italic p-2">
+    No timeout warnings
+</div>
+{{end}}
+{{end}}
+
+{{define "lambda-resources"}}
+{{if .Metrics}}
+<div class="space-y-1">
+    {{range .Metrics}}
+    <details class="collapse collapse-arrow border-b border-base-300 bg-base-100"
+             data-preserve-attr="open"
+             data-show="$lambdaEnv == 'all' || $lambdaEnv == ('{{.Env}}'.includes(':') ? '{{.Env}}'.split(':')[0] : '{{.Env}}')">>>
+        <summary class="collapse-title min-h-0 py-2 cursor-pointer hover:bg-base-200/50">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-ghost badge-xs">{{.Env}}</span>
+                    <span class="badge badge-primary badge-xs">Lambda</span>
+                    <span class="font-mono text-sm">{{.FunctionName}}</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="text-xs">
+                        <span class="{{if ge .TimeoutPercent 90.0}}text-error font-semibold{{else if ge .TimeoutPercent 80.0}}text-warning{{else}}text-success{{end}}">
+                            {{printf "%.0f" .TimeoutPercent}}% timeout
+                        </span>
+                    </div>
+                    {{if .ConfigError}}
+                    <span class="badge badge-warning badge-xs">config error</span>
+                    {{end}}
+                </div>
+            </div>
+        </summary>
+        <div class="collapse-content pt-2 pb-3">
+            {{if .ConfigError}}
+            <div class="alert alert-warning shadow-sm mb-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div class="text-xs">
+                    <strong>Configuration Error:</strong> {{.ConfigError}}
+                    <div class="mt-1 opacity-75">May need lambda:GetFunctionConfiguration permission</div>
+                </div>
+            </div>
+            {{else}}
+
+            <!-- Memory Warning if >= 90% -->
+            {{if ge .MemoryPercent 90.0}}
+            <div class="alert alert-error shadow-sm mb-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div class="flex-1">
+                    <div class="font-semibold">High Memory Usage</div>
+                    <div class="text-xs mt-1">
+                        This function is using <strong>{{printf "%.0f" .MemoryPercent}}%</strong> of allocated memory
+                        ({{.MemoryUsed}}MB average / {{.MemoryMax}}MB peak)
+                    </div>
+                    <div class="text-xs mt-2">
+                        <strong>Recommendation:</strong> Increase allocated memory to prevent out-of-memory errors
+                    </div>
+                </div>
+            </div>
+            {{end}}
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Maximum execution time configured for this function">
+                    <div class="stat-title text-xs">Timeout Setting</div>
+                    <div class="stat-value text-lg">{{.FormatTimeout}}</div>
+                    <div class="stat-desc text-xs">{{.GetTimeoutSeconds}}s configured</div>
+                </div>
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average duration from recent invocations (active + last 24h failures + last 1h completed, max 100 invocations)">
+                    <div class="stat-title text-xs">
+                        Avg Duration
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 inline opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                    <div class="stat-value text-lg {{if ge .TimeoutPercent 90.0}}text-error{{else if ge .TimeoutPercent 80.0}}text-warning{{else}}text-success{{end}}">
+                        {{.FormatAvgDuration}}
+                    </div>
+                    <div class="stat-desc text-xs">{{printf "%.0f" .TimeoutPercent}}% of limit</div>
+                </div>
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Longest duration observed in recent invocations">
+                    <div class="stat-title text-xs">Max Duration</div>
+                    <div class="stat-value text-lg">{{.FormatMaxDuration}}</div>
+                    <div class="stat-desc text-xs">peak observed</div>
+                </div>
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average memory used from recent invocations (active + last 24h failures + last 1h completed, max 50 invocations)">
+                    <div class="stat-title text-xs">Memory Usage</div>
+                    <div class="stat-value text-lg {{if ge .MemoryPercent 90.0}}text-error{{else if ge .MemoryPercent 80.0}}text-warning{{else}}text-success{{end}}">
+                        {{.MemoryUsed}}MB
+                    </div>
+                    <div class="stat-desc text-xs">{{printf "%.0f" .MemoryPercent}}% of {{.MemoryAllocated}}MB</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                <div class="bg-base-200/30 rounded p-2 tooltip" data-tip="Total invocations tracked from recent Step Function executions">
+                    <div class="text-xs text-base-content/60">Invocations</div>
+                    <div class="text-sm font-semibold">{{.InvocationCount}}</div>
+                </div>
+                {{if gt .MemoryMax 0}}
+                <div class="bg-base-200/30 rounded p-2 tooltip" data-tip="Maximum memory used across all recent invocations">
+                    <div class="text-xs text-base-content/60">Peak Memory</div>
+                    <div class="text-sm font-semibold">{{.MemoryMax}}MB</div>
+                </div>
+                {{end}}
+                {{if gt .TimeoutCount 0}}
+                <div class="bg-error/10 rounded p-2 tooltip" data-tip="Number of times this function exceeded its timeout limit">
+                    <div class="text-xs text-error/80">Timeouts</div>
+                    <div class="text-sm font-semibold text-error">{{.TimeoutCount}}</div>
+                </div>
+                {{end}}
+                {{if gt .ErrorCount 0}}
+                <div class="bg-warning/10 rounded p-2 tooltip" data-tip="Number of failed invocations (excluding timeouts)">
+                    <div class="text-xs text-warning/80">Errors</div>
+                    <div class="text-sm font-semibold text-warning">{{.ErrorCount}}</div>
+                </div>
+                {{end}}
+            </div>
+            {{end}}
+
+            {{if .UsedByStepFuncs}}
+            <div class="mt-3 pt-3 border-t border-base-300">
+                <h4 class="font-semibold text-xs mb-2 text-base-content/80">Used by Step Functions:</h4>
+                <div class="flex flex-wrap gap-1">
+                    {{range .UsedByStepFuncs}}
+                    <span class="badge badge-sm badge-outline">{{.}}</span>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+
+            {{if not .LastInvoked.IsZero}}
+            <div class="text-xs text-base-content/50 mt-3">
+                Last invoked: {{formatTimeLocal .LastInvoked}}
+            </div>
+            {{end}}
+        </div>
+    </details>
+    {{end}}
+</div>
+{{else}}
+<div class="py-10 text-center text-base-content/60 italic text-sm">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+    </svg>
+    <div>No Lambda functions discovered yet</div>
+    <div class="text-xs mt-2">Lambda functions will appear as Step Functions execute</div>
+</div>
+{{end}}
+{{end}}
