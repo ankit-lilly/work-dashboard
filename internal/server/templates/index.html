@@ -8,6 +8,7 @@
          credential_error_msg: '',
          selectedSm: '',
          smEnv: 'all',
+         smSearch: '',
          failuresEnv: 'all',
          failuresSearch: '',
          recordEnv: 'all',
@@ -19,6 +20,7 @@
          recent_failures_count: 0,
          recent_completed_count: 0,
          rdsEnv: 'all',
+         rdsSearch: '',
          selectedRdsDb: '',
          rds_loading: false,
          rds_db_count: 0,
@@ -29,7 +31,8 @@
          rds_query_text: '',
          lambda_warnings: 0,
          lambda_count: 0,
-         lambdaEnv: 'all'
+         lambdaEnv: 'all',
+         lambdaSearch: ''
      }"
      data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
 
@@ -153,6 +156,11 @@
                         <span class="badge badge-sm badge-ghost">Last 10 executions</span>
                     </div>
                     <div class="join join-horizontal" onclick="event.stopPropagation()">
+                        <input id="sm-search" aria-label="Search state machines"
+                            type="text"
+                            class="input input-sm input-bordered join-item w-44"
+                            placeholder="Search..."
+                            data-bind="smSearch" />
                         <select id="sm-env" aria-label="Filter environment"
                             class="select select-sm select-bordered join-item"
                             data-bind="smEnv"
@@ -168,10 +176,12 @@
                             data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; @get('/api/state-machine-executions?env=' + opt.dataset.env + '&arn=' + evt.target.value, {openWhenHidden: true, requestCancellation: 'disabled'}) }"
                             data-indicator:sm_exec_loading
                             data-effect="
+                                const searchTerm = ($smSearch || '').toLowerCase().trim();
                                 for (const opt of el.options) {
                                     if (!opt.dataset.baseEnv) continue;
-                                    const shouldShow = ($smEnv === 'all' || $smEnv === opt.dataset.baseEnv);
-                                    opt.style.display = shouldShow ? '' : 'none';
+                                    const envMatch = ($smEnv === 'all' || $smEnv === opt.dataset.baseEnv);
+                                    const searchMatch = searchTerm === '' || opt.textContent.toLowerCase().includes(searchTerm);
+                                    opt.style.display = (envMatch && searchMatch) ? '' : 'none';
                                 }
                                 if (el.selectedOptions[0]?.style.display === 'none') {
                                     el.value = '';
@@ -221,6 +231,11 @@
                         <span class="badge badge-sm badge-ghost">Last 2h</span>
                     </div>
                     <div class="join join-horizontal" onclick="event.stopPropagation()">
+                        <input id="rds-search" aria-label="Search RDS"
+                            type="text"
+                            class="input input-sm input-bordered join-item w-44"
+                            placeholder="Search..."
+                            data-bind="rdsSearch" />
                         <select id="rds-env" aria-label="Filter environment"
                             class="select select-sm select-bordered join-item"
                             data-bind="rdsEnv"
@@ -276,6 +291,11 @@
                         </span>
                     </div>
                     <div class="join join-horizontal" onclick="event.stopPropagation()">
+                        <input id="lambda-search" aria-label="Search Lambda"
+                            type="text"
+                            class="input input-sm input-bordered join-item w-44"
+                            placeholder="Search..."
+                            data-bind="lambdaSearch" />
                         <select id="lambda-env" aria-label="Filter environment"
                             class="select select-sm select-bordered join-item"
                             data-bind="lambdaEnv">
@@ -353,14 +373,14 @@
                                     el.value = '';
                                 }
                             ">
-                            <option value="">All state machines</option>
-                            {{range .StateMachines}}
+                            <option value="">All RulesProcessor</option>
+                            {{range .StateMachines}}{{if contains .Name "RulesProcessor"}}
                             <option value="{{.Arn}}"
                                     data-env="{{.Env}}"
                                     data-base-env="{{.BaseEnv}}">
                                 {{.Name}} ({{.Env}})
                             </option>
-                            {{end}}
+                            {{end}}{{end}}
                         </select>
                         <input id="start_date" name="start_date" type="date"
                             class="input input-sm input-bordered"

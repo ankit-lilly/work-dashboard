@@ -54,8 +54,9 @@
 <div class="space-y-1">
     {{range .Metrics}}
     <details class="collapse collapse-arrow border-b border-base-300 bg-base-100"
+             id="lambda-{{.Env}}-{{.FunctionName}}"
              data-preserve-attr="open"
-             data-show="$lambdaEnv == 'all' || $lambdaEnv == ('{{.Env}}'.includes(':') ? '{{.Env}}'.split(':')[0] : '{{.Env}}')">>>
+             data-show="($lambdaEnv == 'all' || $lambdaEnv == ('{{.Env}}'.includes(':') ? '{{.Env}}'.split(':')[0] : '{{.Env}}')) && (($lambdaSearch || '').trim() == '' || el.innerText.toLowerCase().includes($lambdaSearch.toLowerCase()))">
         <summary class="collapse-title min-h-0 py-2 cursor-pointer hover:bg-base-200/50">
             <div class="flex justify-between items-center">
                 <div class="flex items-center gap-2">

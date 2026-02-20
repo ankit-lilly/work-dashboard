@@ -608,3 +608,68 @@ func (s *Server) sendCachedLambdaMetrics(sse *datastar.ServerSentEventGenerator)
 		}
 	}
 }
+
+// setCredentialError records a credential error for display in UI
+func (s *Server) setCredentialError(err error) {
+	s.credentialErrorMu.Lock()
+	defer s.credentialErrorMu.Unlock()
+	s.credentialError = true
+	s.credentialErrorMsg = err.Error()
+	s.credentialErrorAt = time.Now()
+}
+
+// clearCredentialError clears the credential error state
+func (s *Server) clearCredentialError() {
+	s.credentialErrorMu.Lock()
+	defer s.credentialErrorMu.Unlock()
+	s.credentialError = false
+	s.credentialErrorMsg = ""
+}
+
+// getCredentialError returns the current credential error state
+func (s *Server) getCredentialError() (bool, string, time.Time) {
+	s.credentialErrorMu.RLock()
+	defer s.credentialErrorMu.RUnlock()
+	return s.credentialError, s.credentialErrorMsg, s.credentialErrorAt
+}
+
+// getActiveExecutionsCount returns the total number of active executions across all environments
+func (s *Server) getActiveExecutionsCount() int {
+	s.activeCacheMu.Lock()
+	defer s.activeCacheMu.Unlock()
+
+	count := 0
+	for _, execs := range s.activeCache {
+		count += len(execs)
+	}
+	return count
+}
+
+func (s *Server) notifyActiveInterval(env string, interval time.Duration) {
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
+	last, ok := s.activeIntervalLogged[env]
+	if ok && last == interval {
+		return
+	}
+	s.activeIntervalLogged[env] = interval
+	slog.Info("active polling interval", "env", env, "interval", interval)
+}
+
+func (s *Server) markNewExecutions(execs []aws.Execution, seen map[string]time.Time) []aws.Execution {
+	if len(execs) == 0 {
+		return execs
+	}
+	now := time.Now()
+	for i := range execs {
+		key := execs[i].ExecutionArn
+		if key == "" {
+			key = execs[i].Env + "|" + execs[i].Name + "|" + execs[i].ExecutionName
+		}
+		if _, ok := seen[key]; !ok {
+			execs[i].New = true
+		}
+		seen[key] = now
+	}
+	return execs
+}

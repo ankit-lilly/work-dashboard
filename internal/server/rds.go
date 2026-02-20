@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -90,6 +91,14 @@ func (s *Server) fetchRDSMetrics() ([]aws.RDSMetric, error) {
 		allMetrics = append(allMetrics, metrics...)
 		slog.Info("fetched RDS metrics", "env", client.EnvName, "db_count", len(metrics), "interval", interval, "has_active", hasActiveExecs)
 	}
+
+	// Sort metrics consistently by Env then DBInstanceId for stable ordering
+	sort.Slice(allMetrics, func(i, j int) bool {
+		if allMetrics[i].Env != allMetrics[j].Env {
+			return allMetrics[i].Env < allMetrics[j].Env
+		}
+		return allMetrics[i].DBInstanceId < allMetrics[j].DBInstanceId
+	})
 
 	return allMetrics, nil
 }

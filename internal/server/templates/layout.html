@@ -43,39 +43,6 @@
                 </label>
             </div>
             <script>
-                const taglines = [
-                    "What's coming before it hits",
-                    "Catch issues before Teams catches fire 🔥",
-                    "See failures before they see you",
-                    "Because 'urgent' messages can wait",
-                    "Your early warning system for AWS chaos",
-                    "Finding issues before standup",
-                    "Staying ahead of the alerts (and the questions)",
-                    "The calm before the storm...of Teams messages",
-                    "Proactive debugging, reactive coffee ☕",
-                    "So you can say 'I know' before they ask",
-                    "Less panic, more scanning 📡",
-                    "Spotting problems before they become tickets",
-                    "Your crystal ball for infrastructure",
-                    "Multi-environment monitoring for DSOA & CAMP"
-                ];
-
-                let currentIndex = 0;
-                const taglineEl = document.getElementById('tagline');
-
-                function rotateTagline() {
-                    taglineEl.style.opacity = '0';
-                    setTimeout(() => {
-                        currentIndex = (currentIndex + 1) % taglines.length;
-                        taglineEl.textContent = taglines[currentIndex];
-                        taglineEl.style.opacity = '1';
-                    }, 500);
-                }
-
-                setInterval(rotateTagline, 20000);
-            </script>
-
-            <script>
                 // Theme persistence and initialization
                 const savedTheme = localStorage.getItem('theme') || 'camp';
                 document.documentElement.setAttribute('data-theme', savedTheme);

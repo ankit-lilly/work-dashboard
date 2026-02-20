@@ -37,10 +37,26 @@ type RecordSearchResult struct {
 	OutputKey     string
 }
 
+type searchParams struct {
+	email        string
+	env          string
+	stateMachine string
+	startAt      *time.Time
+	endAt        *time.Time
+}
+
 type searchUpdate struct {
 	newResults []RecordSearchResult
 	err        error
 	done       bool
+	progress   *searchProgress
+}
+
+type searchProgress struct {
+	Env          string
+	StateMachine string
+	Checked      int
+	Total        int
 }
 
 type searchState struct {
@@ -56,9 +72,283 @@ type searchState struct {
 
 func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 	sse := datastar.NewSSE(w, r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+
+	params, err := s.parseSearchParams(r)
+	if err != nil {
+		s.renderSearchError(sse, params.email, params.env, err)
 		return
+	}
+
+	state := s.getOrCreateSearchState(buildSearchKey(params))
+	s.renderInitialSearchResults(sse, params, state)
+
+	if params.email == "" {
+		return
+	}
+
+	s.startSearchIfNeeded(r.Context(), params, state)
+	s.streamSearchUpdates(r.Context(), w, sse, params.email, state)
+}
+
+func (s *Server) handleRecordSearchCancel(w http.ResponseWriter, r *http.Request) {
+	sse := datastar.NewSSE(w, r)
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if key == "" {
+		return
+	}
+
+	state := s.getOrCreateSearchState(key)
+	state.cancel()
+	s.renderSearchStopped(sse)
+}
+
+// searchAllEnvironments searches for an email across all matching environments in parallel.
+func (s *Server) searchAllEnvironments(ctx context.Context, params searchParams, state *searchState) {
+	defer func() {
+		slog.Info("search completed", "email", params.email)
+		state.markDone()
+	}()
+
+	clients := s.getMatchingClients(params.env)
+	slog.Info("search starting", "email", params.email, "env_filter", params.env, "client_count", len(clients))
+
+	if len(clients) == 0 {
+		slog.Warn("no matching clients found for search", "env_filter", params.env)
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, client := range clients {
+		wg.Add(1)
+		go func(c *aws.Client) {
+			defer wg.Done()
+			s.searchEnvironment(ctx, c, params, state)
+		}(client)
+	}
+	wg.Wait()
+}
+
+// searchEnvironment searches all RulesProcessor state machines in a single environment.
+func (s *Server) searchEnvironment(ctx context.Context, client *aws.Client, params searchParams, state *searchState) {
+	stateMachines := s.getRulesProcessorStateMachines(ctx, client, params.stateMachine)
+	slog.Info("searching environment", "env", client.EnvName, "rules_processor_count", len(stateMachines))
+
+	if len(stateMachines) == 0 {
+		return
+	}
+
+	var wg sync.WaitGroup
+	for i, sm := range stateMachines {
+		if state.isCanceled() || ctx.Err() != nil {
+			slog.Warn("search canceled or context done", "env", client.EnvName, "canceled", state.isCanceled(), "ctx_err", ctx.Err())
+			return
+		}
+
+		wg.Add(1)
+		go func(sm types.StateMachineListItem, index int) {
+			defer wg.Done()
+			s.searchStateMachine(ctx, client, sm, params, state, index, len(stateMachines))
+		}(sm, i)
+	}
+	wg.Wait()
+}
+
+// searchStateMachine searches all executions of a single state machine for the email.
+func (s *Server) searchStateMachine(ctx context.Context, client *aws.Client, sm types.StateMachineListItem, params searchParams, state *searchState, index, total int) {
+	if state.isCanceled() || ctx.Err() != nil {
+		return
+	}
+
+	smName := derefString(sm.Name)
+	state.broadcastProgress(client.EnvName, smName, index, total)
+
+	executions := s.listAllExecutions(ctx, client, sm.StateMachineArn, params.startAt)
+
+	// Log date range of executions found
+	if len(executions) > 0 {
+		oldest := executions[len(executions)-1]
+		newest := executions[0]
+		slog.Info("searching state machine",
+			"env", client.EnvName,
+			"sm", smName,
+			"execution_count", len(executions),
+			"newest", formatTime(newest.StartDate),
+			"oldest", formatTime(oldest.StartDate))
+	} else {
+		slog.Info("searching state machine", "env", client.EnvName, "sm", smName, "execution_count", 0)
+	}
+
+	s.searchExecutionsForEmail(ctx, client, executions, smName, params, state)
+}
+
+func (s *Server) searchExecutionsForEmail(ctx context.Context, client *aws.Client, executions []types.ExecutionListItem, smName string, params searchParams, state *searchState) {
+	checkedCount := 0
+	for _, exec := range executions {
+		if state.isCanceled() || ctx.Err() != nil {
+			return
+		}
+
+		if !s.executionInDateRange(exec, params.startAt, params.endAt) {
+			continue
+		}
+
+		checkedCount++
+		result := s.checkExecutionForEmail(ctx, client, exec, smName, params.email)
+		if result != nil && state.addResult(*result) {
+			slog.Info("found match", "env", client.EnvName, "sm", smName, "execution", result.ExecutionName, "index", result.Index)
+			state.broadcastResult(*result)
+		}
+	}
+	slog.Debug("finished searching executions", "env", client.EnvName, "sm", smName, "checked", checkedCount)
+}
+
+func (s *Server) getMatchingClients(envFilter string) []*aws.Client {
+	var clients []*aws.Client
+	for _, client := range s.awsManager.Clients {
+		if envMatchesSelection(client.EnvName, envFilter) {
+			clients = append(clients, client)
+		}
+	}
+	return clients
+}
+
+func (s *Server) getRulesProcessorStateMachines(ctx context.Context, client *aws.Client, filter string) []types.StateMachineListItem {
+	allMachines, err := client.ListFilteredStateMachines(ctx, 10*time.Minute)
+	if err != nil {
+		if !isContextCanceled(err) {
+			slog.Warn("list state machines failed", "env", client.EnvName, "err", err)
+		}
+		return nil
+	}
+
+	var rulesProcessors []types.StateMachineListItem
+	for _, sm := range allMachines {
+		name := derefString(sm.Name)
+		if strings.Contains(name, "RulesProcessor") && matchesFilter(sm, filter) {
+			rulesProcessors = append(rulesProcessors, sm)
+		}
+	}
+	return rulesProcessors
+}
+
+func (s *Server) listAllExecutions(ctx context.Context, client *aws.Client, arn *string, startAt *time.Time) []types.ExecutionListItem {
+	cutoff := time.Time{}
+	if startAt != nil {
+		cutoff = *startAt
+	}
+
+	execs, err := listExecutionsUnlimited(ctx, client, arn, cutoff)
+	if err != nil {
+		if !isContextCanceled(err) {
+			slog.Warn("list executions failed", "arn", derefString(arn), "err", err)
+		}
+		return nil
+	}
+	return execs
+}
+
+func (s *Server) executionInDateRange(exec types.ExecutionListItem, startAt, endAt *time.Time) bool {
+	if exec.StartDate == nil {
+		return false
+	}
+	if startAt != nil && exec.StartDate.Before(*startAt) {
+		return false
+	}
+	if endAt != nil && exec.StartDate.After(*endAt) {
+		return false
+	}
+	return true
+}
+
+func (s *Server) checkExecutionForEmail(ctx context.Context, client *aws.Client, exec types.ExecutionListItem, smName, email string) *RecordSearchResult {
+	execName := derefString(exec.Name)
+
+	desc, err := client.Sfn.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+		ExecutionArn: exec.ExecutionArn,
+	})
+	if err != nil {
+		return nil
+	}
+
+	bucket, key := extractBucketKey(desc.Input)
+	if bucket == "" || key == "" {
+		// Log first 200 chars of input to debug extraction
+		inputPreview := ""
+		if desc.Input != nil && len(*desc.Input) > 0 {
+			inputPreview = *desc.Input
+			if len(inputPreview) > 200 {
+				inputPreview = inputPreview[:200] + "..."
+			}
+		}
+		slog.Info("no bucket/key extracted", "exec", execName, "input_preview", inputPreview)
+		return nil
+	}
+
+	match, err := client.FindEmailInS3JSON(ctx, bucket, key, email)
+	if err != nil {
+		slog.Warn("find email error", "exec", execName, "bucket", bucket, "key", key, "err", err)
+		return nil
+	}
+	if match == nil {
+		return nil
+	}
+
+	outBucket, outKey := extractResultWriterDetails(desc.Output)
+	outPrefix := ""
+	if outBucket != "" && outKey != "" {
+		outPrefix = strings.TrimSuffix(outKey, path.Base(outKey))
+	}
+
+	return &RecordSearchResult{
+		Env:           client.EnvName,
+		StateMachine:  smName,
+		ExecutionName: derefString(exec.Name),
+		ExecutionArn:  derefString(exec.ExecutionArn),
+		StartTime:     formatTime(exec.StartDate),
+		Bucket:        bucket,
+		Key:           key,
+		Index:         match.Index,
+		Record:        match.Record,
+		OutputBucket:  outBucket,
+		OutputPrefix:  outPrefix,
+		OutputKey:     outKey,
+	}
+}
+
+func listExecutionsUnlimited(ctx context.Context, c *aws.Client, arn *string, cutoff time.Time) ([]types.ExecutionListItem, error) {
+	statuses := []types.ExecutionStatus{
+		types.ExecutionStatusRunning,
+		types.ExecutionStatusFailed,
+		types.ExecutionStatusSucceeded,
+	}
+
+	const maxPages = 50
+	var results []types.ExecutionListItem
+
+	for _, status := range statuses {
+		execs, err := c.ListRecentExecutionsByStatus(ctx, arn, status, cutoff, maxPages)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, execs...)
+	}
+
+	return results, nil
+}
+
+func matchesFilter(sm types.StateMachineListItem, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+	name := strings.ToLower(derefString(sm.Name))
+	arn := strings.ToLower(derefString(sm.StateMachineArn))
+	return strings.Contains(name, filter) || strings.Contains(arn, filter)
+}
+
+func (s *Server) parseSearchParams(r *http.Request) (searchParams, error) {
+	if err := r.ParseForm(); err != nil {
+		return searchParams{}, err
 	}
 
 	email := strings.TrimSpace(r.FormValue("email_address"))
@@ -69,132 +359,162 @@ func (s *Server) handleRecordSearch(w http.ResponseWriter, r *http.Request) {
 
 	startAt, endAt, err := parseDateRange(startDate, endDate)
 	if err != nil {
-		var buf bytes.Buffer
-		tmpl := s.templateSet("index")
-		if tmpl != nil {
-			if err := tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
-				"Email":     email,
-				"Env":       env,
-				"SearchKey": "",
-				"Results":   nil,
-				"Error":     err.Error(),
-				"Searching": false,
-				"Stopped":   false,
-			}); err != nil {
-				slog.Error("template render failed", "template", "record-search-results", "error", err)
-			} else {
-				sse.PatchElements(buf.String(), datastar.WithUseViewTransitions(false))
-			}
-		}
+		return searchParams{email: email, env: env}, err
+	}
+
+	return searchParams{
+		email:        email,
+		env:          env,
+		stateMachine: stateMachine,
+		startAt:      startAt,
+		endAt:        endAt,
+	}, nil
+}
+
+func (s *Server) renderSearchError(sse *datastar.ServerSentEventGenerator, email, env string, err error) {
+	var buf bytes.Buffer
+	tmpl := s.templateSet("index")
+	if tmpl == nil {
 		return
 	}
 
-	key := buildSearchKey(email, env, stateMachine, startDate, endDate)
-	state := s.getOrCreateSearchState(key)
-
-	// Initial render (shell + existing rows)
-	{
-		var buf bytes.Buffer
-		tmpl := s.templateSet("index")
-		if tmpl == nil {
-			return
-		}
-		state.mu.Lock()
-		existing := make([]RecordSearchResult, len(state.results))
-		copy(existing, state.results)
-		searching := email != "" && !state.done && !state.canceled
-		state.mu.Unlock()
-
-		if err := tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
-			"Email":     email,
-			"Env":       env,
-			"SearchKey": key,
-			"Results":   existing,
-			"Error":     nil,
-			"Searching": searching,
-		}); err != nil {
-			slog.Error("template render failed", "template", "record-search-results", "error", err)
-		} else {
-			sse.PatchElements(buf.String())
-		}
+	if err := tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
+		"Email":     email,
+		"Env":       env,
+		"SearchKey": "",
+		"Results":   nil,
+		"Error":     err.Error(),
+		"Searching": false,
+		"Stopped":   false,
+	}); err != nil {
+		slog.Error("template render failed", "template", "record-search-results", "error", err)
+		return
 	}
+	sse.PatchElements(buf.String(), datastar.WithUseViewTransitions(false))
+}
 
-	if email == "" {
+func (s *Server) renderInitialSearchResults(sse *datastar.ServerSentEventGenerator, params searchParams, state *searchState) {
+	var buf bytes.Buffer
+	tmpl := s.templateSet("index")
+	if tmpl == nil {
 		return
 	}
 
 	state.mu.Lock()
+	existing := make([]RecordSearchResult, len(state.results))
+	copy(existing, state.results)
+	searching := params.email != "" && !state.done && !state.canceled
+	state.mu.Unlock()
+
+	if err := tmpl.ExecuteTemplate(&buf, "record-search-results", map[string]any{
+		"Email":     params.email,
+		"Env":       params.env,
+		"SearchKey": buildSearchKey(params),
+		"Results":   existing,
+		"Error":     nil,
+		"Searching": searching,
+	}); err != nil {
+		slog.Error("template render failed", "template", "record-search-results", "error", err)
+		return
+	}
+	sse.PatchElements(buf.String())
+}
+
+func (s *Server) renderSearchStopped(sse *datastar.ServerSentEventGenerator) {
+	var buf bytes.Buffer
+	tmpl := s.templateSet("index")
+	if tmpl == nil {
+		return
+	}
+
+	if err := tmpl.ExecuteTemplate(&buf, "record-search-status", map[string]any{
+		"Searching": false,
+		"Email":     "",
+		"Stopped":   true,
+	}); err != nil {
+		slog.Error("template render failed", "template", "record-search-status", "error", err)
+		return
+	}
+	sse.PatchElements(buf.String(),
+		datastar.WithSelector("#record-search-status"),
+		datastar.WithMode(datastar.ElementPatchModeOuter),
+	)
+}
+
+func (s *Server) startSearchIfNeeded(ctx context.Context, params searchParams, state *searchState) {
+	state.mu.Lock()
 	shouldStart := !state.running && !state.done && !state.canceled
+	slog.Info("startSearchIfNeeded", "shouldStart", shouldStart, "running", state.running, "done", state.done, "canceled", state.canceled)
 	if shouldStart {
 		state.running = true
 	}
 	state.mu.Unlock()
 
 	if shouldStart {
-		go func() {
-			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
-			defer cancel()
-			s.searchEmailStreaming(ctx, email, env, stateMachine, startAt, endAt, state)
-		}()
+		go s.searchAllEnvironments(ctx, params, state)
 	}
+}
 
+func (s *Server) streamSearchUpdates(ctx context.Context, w http.ResponseWriter, sse *datastar.ServerSentEventGenerator, email string, state *searchState) {
 	ch := state.subscribe()
 	defer state.unsubscribe(ch)
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
-		case upd, ok := <-ch:
+		case update, ok := <-ch:
 			if !ok {
 				return
 			}
 
-			if len(upd.newResults) > 0 {
-				var buf bytes.Buffer
-				tmpl := s.templateSet("index")
-				if tmpl == nil {
-					return
-				}
-				if err := tmpl.ExecuteTemplate(&buf, "record-search-rows", map[string]any{
-					"Results": upd.newResults,
-				}); err != nil {
-					slog.Error("template render failed", "template", "record-search-rows", "error", err)
-				} else {
-					sse.PatchElements(
-						buf.String(),
-						datastar.WithSelector("#record-search-rows"),
-						datastar.WithMode(datastar.ElementPatchModeAppend),
-						datastar.WithUseViewTransitions(false),
-					)
-				}
-			}
+			s.renderSearchUpdate(sse, email, update)
 
-			var statusBuf bytes.Buffer
-			tmpl := s.templateSet("index")
-			if tmpl == nil {
-				return
-			}
-			if err := tmpl.ExecuteTemplate(&statusBuf, "record-search-status", map[string]any{
-				"Searching": !upd.done,
-				"Email":     email,
-				"Stopped":   false,
-			}); err != nil {
-				slog.Error("template render failed", "template", "record-search-status", "error", err)
-			} else {
-				sse.PatchElements(
-					statusBuf.String(),
-					datastar.WithSelector("#record-search-status"),
-					datastar.WithMode(datastar.ElementPatchModeOuter),
-					datastar.WithUseViewTransitions(false),
-				)
-			}
-
-			if upd.done {
-				keepAlive(r.Context(), w)
+			if update.done {
+				keepAlive(ctx, w)
 				return
 			}
 		}
+	}
+}
+
+func (s *Server) renderSearchUpdate(sse *datastar.ServerSentEventGenerator, email string, update searchUpdate) {
+	tmpl := s.templateSet("index")
+	if tmpl == nil {
+		return
+	}
+
+	// Render new results
+	if len(update.newResults) > 0 {
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "record-search-rows", map[string]any{
+			"Results": update.newResults,
+		}); err != nil {
+			slog.Error("template render failed", "template", "record-search-rows", "error", err)
+		} else {
+			sse.PatchElements(buf.String(),
+				datastar.WithSelector("#record-search-rows"),
+				datastar.WithMode(datastar.ElementPatchModeAppend),
+				datastar.WithUseViewTransitions(false),
+			)
+		}
+	}
+
+	// Render status update
+	var statusBuf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&statusBuf, "record-search-status", map[string]any{
+		"Searching": !update.done,
+		"Email":     email,
+		"Stopped":   false,
+		"Progress":  update.progress,
+	}); err != nil {
+		slog.Error("template render failed", "template", "record-search-status", "error", err)
+	} else {
+		sse.PatchElements(statusBuf.String(),
+			datastar.WithSelector("#record-search-status"),
+			datastar.WithMode(datastar.ElementPatchModeOuter),
+			datastar.WithUseViewTransitions(false),
+		)
 	}
 }
 
@@ -216,179 +536,29 @@ func keepAlive(ctx context.Context, w http.ResponseWriter) {
 	}
 }
 
-func (s *Server) handleRecordSearchCancel(w http.ResponseWriter, r *http.Request) {
-	sse := datastar.NewSSE(w, r)
-	key := strings.TrimSpace(r.URL.Query().Get("key"))
-	if key == "" {
-		return
-	}
-
-	state := s.getOrCreateSearchState(key)
-	state.mu.Lock()
-	state.canceled = true
-	state.running = false
-	state.done = true
-	state.mu.Unlock()
-	state.broadcast(searchUpdate{done: true})
-
-	var buf bytes.Buffer
-	tmpl := s.templateSet("index")
-	if tmpl == nil {
-		return
-	}
-	if err := tmpl.ExecuteTemplate(&buf, "record-search-status", map[string]any{
-		"Searching": false,
-		"Email":     "",
-		"Stopped":   true,
-	}); err != nil {
-		slog.Error("template render failed", "template", "record-search-status", "error", err)
-	} else {
-		sse.PatchElements(
-			buf.String(),
-			datastar.WithSelector("#record-search-status"),
-			datastar.WithMode(datastar.ElementPatchModeOuter),
-		)
-	}
-}
-
-func (s *Server) searchEmailStreaming(ctx context.Context, email, env, stateMachine string, startAt, endAt *time.Time, state *searchState) {
-	defer func() {
-		state.mu.Lock()
-		state.running = false
-		state.done = true
-		state.mu.Unlock()
-		state.broadcast(searchUpdate{done: true})
-	}()
-
-	cutoff := time.Time{}
-	if startAt != nil {
-		cutoff = *startAt
-	}
-	maxResults := 20
-	if startAt != nil || endAt != nil {
-		maxResults = 100
-	}
-
-	for _, client := range s.awsManager.Clients {
-		if !envMatchesSelection(client.EnvName, env) {
-			continue
-		}
-
-		stateMachines, err := client.ListFilteredStateMachines(ctx, 10*time.Minute)
-		if err != nil {
-			if !isContextCanceled(err) {
-				slog.Warn("list filtered state machines failed", "env", client.EnvName, "err", err)
-			}
-			continue
-		}
-
-		const batchSize = 4
-		const batchDelay = 400 * time.Millisecond
-
-		for i := 0; i < len(stateMachines); i += batchSize {
-			if ctx.Err() != nil || state.isCanceled() {
-				return
-			}
-
-			end := i + batchSize
-			if end > len(stateMachines) {
-				end = len(stateMachines)
-			}
-
-			for _, sm := range stateMachines[i:end] {
-				if !matchesStateMachineFilter(sm, stateMachine) {
-					continue
-				}
-				execs, err := listRecentExecutionsForSearch(ctx, client, sm.StateMachineArn, cutoff, maxResults)
-				if err != nil {
-					if !isContextCanceled(err) {
-						slog.Warn("list recent executions failed", "env", client.EnvName, "state_machine_arn", derefString(sm.StateMachineArn), "err", err)
-					}
-					continue
-				}
-
-				var newResults []RecordSearchResult
-				for _, e := range execs {
-					if e.StartDate == nil {
-						continue
-					}
-					if startAt != nil && e.StartDate.Before(*startAt) {
-						continue
-					}
-					if endAt != nil && e.StartDate.After(*endAt) {
-						continue
-					}
-					desc, err := client.Sfn.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
-						ExecutionArn: e.ExecutionArn,
-					})
-					if err != nil {
-						continue
-					}
-
-					bucket, key := extractBucketKey(desc.Input)
-					if bucket == "" || key == "" {
-						continue
-					}
-					outBucket, outKey := extractResultWriterDetails(desc.Output)
-					outPrefix := ""
-					if outBucket != "" && outKey != "" {
-						outPrefix = strings.TrimSuffix(outKey, path.Base(outKey))
-					}
-
-					match, err := client.FindEmailInS3JSON(ctx, bucket, key, email)
-					if err != nil || match == nil {
-						continue
-					}
-
-					res := RecordSearchResult{
-						Env:           client.EnvName,
-						StateMachine:  derefString(sm.Name),
-						ExecutionName: derefString(e.Name),
-						ExecutionArn:  derefString(e.ExecutionArn),
-						StartTime:     formatTime(e.StartDate),
-						Bucket:        bucket,
-						Key:           key,
-						Index:         match.Index,
-						Record:        match.Record,
-						OutputBucket:  outBucket,
-						OutputPrefix:  outPrefix,
-						OutputKey:     outKey,
-					}
-
-					if state.addResult(res) {
-						newResults = append(newResults, res)
-					}
-				}
-
-				if len(newResults) > 0 {
-					state.broadcast(searchUpdate{newResults: newResults})
-				}
-			}
-
-			if end < len(stateMachines) {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				case <-time.After(batchDelay):
-				}
-			}
-		}
-	}
-}
-
 func (s *Server) getOrCreateSearchState(key string) *searchState {
+	slog.Info("getOrCreateSearchState", "key", key)
+
 	if key == "" {
-		return &searchState{}
+		slog.Warn("empty search key, creating ephemeral state")
+		return &searchState{
+			seen:      make(map[string]struct{}),
+			listeners: make(map[chan searchUpdate]struct{}),
+		}
 	}
+
 	s.searchMu.Lock()
 	defer s.searchMu.Unlock()
+
 	if st, ok := s.searchStates[key]; ok {
 		st.mu.Lock()
+		slog.Info("reusing existing search state", "key", key, "done", st.done, "canceled", st.canceled, "results", len(st.results))
 		st.lastActivity = time.Now()
 		st.mu.Unlock()
 		return st
 	}
+
+	slog.Info("creating new search state", "key", key)
 	st := &searchState{
 		seen:         make(map[string]struct{}),
 		listeners:    make(map[chan searchUpdate]struct{}),
@@ -401,25 +571,43 @@ func (s *Server) getOrCreateSearchState(key string) *searchState {
 func (s *searchState) addResult(res RecordSearchResult) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.lastActivity = time.Now()
 	key := res.ExecutionArn + "|" + strconv.Itoa(res.Index)
-	if _, ok := s.seen[key]; ok {
+	if _, exists := s.seen[key]; exists {
 		return false
 	}
+
 	s.seen[key] = struct{}{}
 	s.results = append(s.results, res)
 	return true
 }
 
+func (s *searchState) broadcastResult(result RecordSearchResult) {
+	s.broadcast(searchUpdate{newResults: []RecordSearchResult{result}})
+}
+
+func (s *searchState) broadcastProgress(env, stateMachine string, checked, total int) {
+	s.broadcast(searchUpdate{
+		progress: &searchProgress{
+			Env:          env,
+			StateMachine: stateMachine,
+			Checked:      checked,
+			Total:        total,
+		},
+	})
+}
+
 func (s *searchState) broadcast(update searchUpdate) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for ch := range s.listeners {
 		select {
 		case ch <- update:
 		default:
 		}
 	}
-	s.mu.Unlock()
 }
 
 func (s *searchState) subscribe() chan searchUpdate {
@@ -435,7 +623,7 @@ func (s *searchState) unsubscribe(ch chan searchUpdate) {
 	defer s.mu.Unlock()
 
 	if _, exists := s.listeners[ch]; !exists {
-		return // Already unsubscribed
+		return
 	}
 
 	delete(s.listeners, ch)
@@ -448,41 +636,92 @@ func (s *searchState) isCanceled() bool {
 	return s.canceled
 }
 
-func listRecentExecutionsForSearch(ctx context.Context, c *aws.Client, stateMachineArn *string, cutoff time.Time, maxResults int) ([]types.ExecutionListItem, error) {
-	statuses := []types.ExecutionStatus{
-		types.ExecutionStatusRunning,
-		types.ExecutionStatusFailed,
-		types.ExecutionStatusSucceeded,
-	}
-
-	if maxResults <= 0 {
-		maxResults = 30
-	}
-	out := make([]types.ExecutionListItem, 0, maxResults)
-	for _, status := range statuses {
-		execs, err := c.ListRecentExecutionsByStatus(ctx, stateMachineArn, status, cutoff, 2)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range execs {
-			out = append(out, e)
-			if len(out) >= maxResults {
-				return out, nil
-			}
-		}
-	}
-
-	return out, nil
+func (s *searchState) cancel() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.canceled = true
+	s.running = false
+	s.done = true
 }
 
-func matchesStateMachineFilter(sm types.StateMachineListItem, filter string) bool {
-	filter = strings.ToLower(strings.TrimSpace(filter))
-	if filter == "" {
-		return true
+func (s *searchState) markDone() {
+	s.mu.Lock()
+	s.running = false
+	s.done = true
+	s.mu.Unlock()
+	s.broadcast(searchUpdate{done: true})
+}
+
+func (s *Server) startSearchStateCleanup() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.cleanupOldSearchStates()
+		}
+	}()
+}
+
+func (s *Server) cleanupOldSearchStates() {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+
+	now := time.Now()
+	for key, state := range s.searchStates {
+		state.mu.Lock()
+		lastActive := state.lastActivity
+		state.mu.Unlock()
+
+		if now.Sub(lastActive) > s.searchStatesTTL {
+			delete(s.searchStates, key)
+		}
 	}
-	name := strings.ToLower(derefString(sm.Name))
-	arn := strings.ToLower(derefString(sm.StateMachineArn))
-	return strings.Contains(name, filter) || strings.Contains(arn, filter)
+}
+
+func buildSearchKey(params searchParams) string {
+	var b strings.Builder
+	b.WriteString(strings.ToLower(strings.TrimSpace(params.email)))
+	b.WriteByte('|')
+	b.WriteString(strings.ToLower(strings.TrimSpace(params.env)))
+	b.WriteByte('|')
+	b.WriteString(strings.ToLower(strings.TrimSpace(params.stateMachine)))
+	b.WriteByte('|')
+	if params.startAt != nil {
+		b.WriteString(params.startAt.Format("2006-01-02"))
+	}
+	b.WriteByte('|')
+	if params.endAt != nil {
+		b.WriteString(params.endAt.Format("2006-01-02"))
+	}
+	return b.String()
+}
+
+func parseDateRange(startDate, endDate string) (*time.Time, *time.Time, error) {
+	const layout = "2006-01-02"
+	var startAt, endAt *time.Time
+
+	if startDate != "" {
+		t, err := time.ParseInLocation(layout, startDate, time.Local)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid start date")
+		}
+		startAt = &t
+	}
+
+	if endDate != "" {
+		t, err := time.ParseInLocation(layout, endDate, time.Local)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid end date")
+		}
+		t = t.Add(24*time.Hour - time.Nanosecond)
+		endAt = &t
+	}
+
+	if startAt != nil && endAt != nil && endAt.Before(*startAt) {
+		return nil, nil, fmt.Errorf("end date must be on or after start date")
+	}
+
+	return startAt, endAt, nil
 }
 
 func extractBucketKey(input *string) (string, string) {
@@ -521,35 +760,6 @@ func getBucketKeyPrefix(m map[string]any) (string, string, string) {
 	return bucket, key, prefix
 }
 
-func parseDateRange(startDate, endDate string) (*time.Time, *time.Time, error) {
-	const layout = "2006-01-02"
-	var startAt *time.Time
-	var endAt *time.Time
-
-	if startDate != "" {
-		t, err := time.ParseInLocation(layout, startDate, time.Local)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid start date")
-		}
-		startAt = &t
-	}
-
-	if endDate != "" {
-		t, err := time.ParseInLocation(layout, endDate, time.Local)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid end date")
-		}
-		t = t.Add(24*time.Hour - time.Nanosecond)
-		endAt = &t
-	}
-
-	if startAt != nil && endAt != nil && endAt.Before(*startAt) {
-		return nil, nil, fmt.Errorf("end date must be on or after start date")
-	}
-
-	return startAt, endAt, nil
-}
-
 func derefString(s *string) string {
 	if s == nil {
 		return ""
@@ -566,24 +776,4 @@ func formatTime(t *time.Time) string {
 
 func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-}
-
-func buildSearchKey(email, env, stateMachine, startDate, endDate string) string {
-	email = strings.ToLower(strings.TrimSpace(email))
-	env = strings.ToLower(strings.TrimSpace(env))
-	stateMachine = strings.ToLower(strings.TrimSpace(stateMachine))
-	startDate = strings.TrimSpace(startDate)
-	endDate = strings.TrimSpace(endDate)
-	var b strings.Builder
-	b.Grow(len(email) + len(env) + len(stateMachine) + len(startDate) + len(endDate) + 16)
-	b.WriteString(email)
-	b.WriteByte('|')
-	b.WriteString(env)
-	b.WriteByte('|')
-	b.WriteString(stateMachine)
-	b.WriteByte('|')
-	b.WriteString(startDate)
-	b.WriteByte('|')
-	b.WriteString(endDate)
-	return b.String()
 }
