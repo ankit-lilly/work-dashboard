@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 type EnvMapping struct {
@@ -43,8 +41,6 @@ type LimitsConfig struct {
 }
 
 func LoadConfig() (*Config, error) {
-	_ = godotenv.Load() // Ignore error if .env doesn't exist
-
 	envs := os.Getenv("JOB_ENVS")
 	if envs == "" {
 		// Default to a sane developer default if nothing is provided

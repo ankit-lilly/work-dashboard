@@ -1,9 +1,13 @@
 ## What
 
-A little dashboard thing for me to view jobs running across different environments without going through the 
-hassle of logging into different AWS accounts. You can't log into two different aws accounts at the same time.
+A little dashboard thing for me to view jobs running across different environments without
+going through the hassle of logging into different AWS accounts.  You can't log into two
+different aws accounts at the same time.
 
-So this makes it convenient for me to monitor and debug things.
+I run this on my local machine and use my aws sso profiles to monitor jobs across different
+environments from a single UI.
+
+Does this even work bro?
 
 
 
@@ -11,7 +15,8 @@ So this makes it convenient for me to monitor and debug things.
 
 It uses Go on the backend and Datastar for updating the UI via SSE.
 
-You need aws sso profiles for it work. You can take a look at .env.example to see what environment variables are expected.
+You need aws sso profiles for it work.  You can take a look at .env.example to see what
+environment variables are expected.
 
 ```shell
 Browser

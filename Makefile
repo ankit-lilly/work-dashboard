@@ -1,10 +1,10 @@
 # CAMP Job Viewer Makefile
 
-BINARY_NAME=work-dashboard
+BINARY_NAME=camp
 VERSION=0.1.0
 BUILD_DIR=bin
 
-.PHONY: all build clean run fmt tidy help css css-watch
+.PHONY: all build clean run run-mcp fmt tidy help css css-watch
 
 all: fmt tidy build
 
@@ -12,6 +12,7 @@ help:
 	@echo "Usage:"
 	@echo "  make build    - Build the optimized binary"
 	@echo "  make run      - Run the project locally"
+	@echo "  make run-mcp  - Run the MCP server (stdio)"
 	@echo "  make css      - Build Tailwind + DaisyUI CSS"
 	@echo "  make css-watch - Watch and rebuild Tailwind CSS"
 	@echo "  make fmt      - Format Go code"
@@ -22,12 +23,16 @@ build:
 	@tailwindcss -i static/src/tailwind.css -o static/css/app.css --minify
 	@echo "Building optimized binary..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags="-s -w" main.go
+	CGO_ENABLED=0 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags="-s -w" .
 	@echo "Binary built at $(BUILD_DIR)/$(BINARY_NAME)"
 
 run: fmt tidy
 	@echo "Starting CAMP Job Viewer..."
-	go run main.go
+	go run . server
+
+run-mcp: fmt tidy
+	@echo "Starting CAMP Investigator MCP..."
+	go run . mcp
 
 fmt:
 	@echo "Formatting code..."
