@@ -47,6 +47,7 @@
 {{end}}
 
 {{define "recent-completed"}}
+<div id="recent-completed-list" class="overflow-x-auto">
 <div class="divide-y divide-base-200">
     {{if .Jobs}}
         {{range .Jobs}}
@@ -139,6 +140,7 @@
     {{else}}
     <div class="p-8 text-center text-sm text-base-content/60">No completed executions in the last 15 minutes.</div>
     {{end}}
+</div>
 </div>
 {{end}}
 
@@ -299,6 +301,7 @@
 {{end}}
 
 {{define "state-machine-executions"}}
+<div id="state-machine-executions-content">
 <div class="divide-y divide-base-200">
     {{if .Error}}
     <div class="alert alert-error rounded-none border-0 border-b border-base-200 text-sm">
@@ -314,6 +317,7 @@
     <div id="state-machine-executions-footer">
         {{template "state-machine-executions-footer" .}}
     </div>
+</div>
 </div>
 {{end}}
 
@@ -640,7 +644,7 @@
         {{end}}
     </div>
     <div class="flex items-center gap-2">
-        <button type="button" class="btn btn-ghost btn-xs" data-on:click="$states_modal_open = false">
+        <button type="button" class="btn btn-ghost btn-xs" data-on:click="$states_modal_open = false; $statesReq = 0">
             Close
         </button>
     </div>

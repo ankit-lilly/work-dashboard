@@ -113,7 +113,9 @@ func (s *Server) fetchAndRenderExecutions(sse *datastar.ServerSentEventGenerator
 		"Error":      execErr,
 	})
 	if err == nil {
-		sse.PatchElements(html, datastar.WithSelector("#state-machine-executions-content"), datastar.WithMode(datastar.ElementPatchModeInner))
+		// Use outer morph (default) — template includes <div id="state-machine-executions-content">.
+		// This preserves data-preserve-attr="open" on <details> accordions.
+		sse.PatchElements(html, datastar.WithUseViewTransitions(false))
 	}
 }
 
@@ -129,7 +131,10 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 	// Fetch and render immediately
 	s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
 
-	// Poll every 5s for live updates
+	// Poll every 5s for live updates.
+	// When the user opens a different execution, $statesReq increments and the
+	// target_id changes. This connection keeps writing to the old target_id which
+	// no longer exists in the DOM — Datastar silently ignores it.
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {

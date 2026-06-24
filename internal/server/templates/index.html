@@ -413,9 +413,11 @@
         </details>
     </section>
 
-<!-- States modal trigger - stable element never morphed by SSE -->
+<!-- States modal trigger - stable element never morphed by SSE.
+     Each click gets a versioned target_id. Old SSE connections write to
+     a target that no longer exists in the DOM, so they're silently ignored. -->
 <div id="states-trigger" class="hidden"
-     data-effect="const r = $statesReq; if (r > 0) { @get('/api/execution-states?env=' + $statesEnv + '&arn=' + $statesArn + '&target_id=states-modal-content', {openWhenHidden: true}) }">
+     data-effect="const r = $statesReq; if (r > 0 && $states_modal_open) { @get('/api/execution-states?env=' + encodeURIComponent($statesEnv) + '&arn=' + encodeURIComponent($statesArn) + '&target_id=states-modal-v-' + r, {openWhenHidden: true}) }">
 </div>
 
 <!-- Modals -->
@@ -439,15 +441,15 @@
     <div class="modal-box max-w-5xl">
         <form method="dialog">
             <button type="button" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
-                aria-label="Close" data-on:click="$states_modal_open = false">✕</button>
+                aria-label="Close" data-on:click="$states_modal_open = false; $statesReq = 0">✕</button>
         </form>
         <h3 class="font-semibold text-lg mb-4">Execution States</h3>
-        <div id="states-modal-content" class="min-h-[120px]">
-            <div class="p-4 text-sm text-base-content/60">Select an execution and click View States.</div>
+        <div data-attr:id="'states-modal-v-' + $statesReq" class="min-h-[120px]">
+            <div class="p-4 text-sm text-base-content/60">Loading...</div>
         </div>
     </div>
     <form method="dialog" class="modal-backdrop">
-        <button data-on:click="$states_modal_open = false">close</button>
+        <button data-on:click="$states_modal_open = false; $statesReq = 0">close</button>
     </form>
 </dialog>
 

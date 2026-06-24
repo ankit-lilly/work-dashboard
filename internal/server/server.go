@@ -5,18 +5,15 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
-	"time"
 
 	app_execution "github.com/EliLillyCo/work-dashboard/internal/app/execution"
 	app_lambda "github.com/EliLillyCo/work-dashboard/internal/app/lambda"
+	app_notification "github.com/EliLillyCo/work-dashboard/internal/app/notification"
 	app_rds "github.com/EliLillyCo/work-dashboard/internal/app/rds"
 	app_search "github.com/EliLillyCo/work-dashboard/internal/app/search"
-	"github.com/EliLillyCo/work-dashboard/internal/broadcaster"
 	"github.com/EliLillyCo/work-dashboard/internal/config"
-	domain_execution "github.com/EliLillyCo/work-dashboard/internal/domain/execution"
-	domain_rds "github.com/EliLillyCo/work-dashboard/internal/domain/rds"
-	domain_statemachine "github.com/EliLillyCo/work-dashboard/internal/domain/statemachine"
 	"github.com/EliLillyCo/work-dashboard/internal/server/render"
+	"github.com/EliLillyCo/work-dashboard/internal/state"
 )
 
 type JokeProvider interface {
@@ -33,15 +30,12 @@ type Server struct {
 	jokeProvider  JokeProvider
 	staticFS      fs.FS
 
-	activeBroadcaster        *broadcaster.Broadcaster[[]domain_execution.Summary]
-	failuresBroadcaster      *broadcaster.Broadcaster[[]domain_execution.Summary]
-	stateMachinesBroadcaster *broadcaster.Broadcaster[[]domain_statemachine.StateMachine]
-	completedBroadcaster     *broadcaster.Broadcaster[[]domain_execution.Summary]
-	rdsBroadcaster           *broadcaster.Broadcaster[[]domain_rds.RDSMetric]
-	lambdaBroadcaster        *broadcaster.Broadcaster[*app_lambda.Report]
+	// Centralized state — single source of truth for dashboard data.
+	dashboardState *state.DashboardState
+	orchestrator   *state.Orchestrator
 }
 
-func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Service, rdsService *app_rds.Service, searchService *app_search.Service, cfg *config.Config, staticFS fs.FS, jokeProvider JokeProvider) (*Server, error) {
+func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Service, rdsService *app_rds.Service, searchService *app_search.Service, cfg *config.Config, staticFS fs.FS, jokeProvider JokeProvider, notify *app_notification.Service) (*Server, error) {
 	renderer, err := render.NewRenderer(templatesFS)
 	if err != nil {
 		return nil, err
@@ -57,32 +51,33 @@ func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Ser
 		jokeProvider:  jokeProvider,
 		staticFS:      staticFS,
 	}
-	s.initBroadcasters()
+	s.initState(notify)
 	return s, nil
 }
 
-func (s *Server) initBroadcasters() {
-	activeInterval := 10 * time.Second
-	failuresInterval := 180 * time.Second
-	stateMachinesInterval := 10 * time.Minute
-	completedInterval := 60 * time.Second
-	rdsInterval := 30 * time.Second
-	lambdaInterval := 60 * time.Second
-	if s.cfg != nil {
-		activeInterval = s.cfg.Polling.ActiveInterval
-		failuresInterval = s.cfg.Polling.FailuresInterval
-		stateMachinesInterval = s.cfg.Polling.StateMachinesInterval
-		rdsInterval = s.cfg.Polling.RDSFastInterval
-	}
-	completedInterval = activeInterval
-	failuresInterval = activeInterval
+func (s *Server) initState(notify *app_notification.Service) {
+	ds := state.NewDashboardState()
+	s.dashboardState = ds
 
-	s.activeBroadcaster = broadcaster.NewBroadcaster(s.execService.FetchActive, activeInterval, "active-executions")
-	s.failuresBroadcaster = broadcaster.NewBroadcaster(s.execService.FetchRecentFailures, failuresInterval, "recent-failures")
-	s.stateMachinesBroadcaster = broadcaster.NewBroadcaster(s.execService.FetchStateMachines, stateMachinesInterval, "state-machines")
-	s.completedBroadcaster = broadcaster.NewBroadcaster(s.execService.FetchRecentCompleted, completedInterval, "recent-completed")
-	s.rdsBroadcaster = broadcaster.NewBroadcaster(s.rdsService.FetchMetrics, rdsInterval, "rds-metrics")
-	s.lambdaBroadcaster = broadcaster.NewBroadcaster(s.lambdaService.FetchMetrics, lambdaInterval, "lambda-metrics")
+	var polling *config.PollingConfig
+	if s.cfg != nil {
+		polling = &s.cfg.Polling
+	}
+
+	oCfg := state.OrchestratorConfig{
+		FetchActive:        s.execService.FetchActive,
+		FetchCompleted:     s.execService.FetchRecentCompleted,
+		FetchFailures:      s.execService.FetchRecentFailures,
+		FetchStateMachines: s.execService.FetchStateMachines,
+		FetchRDS:           s.rdsService.FetchMetrics,
+		FetchLambda:        s.lambdaService.FetchMetrics,
+		CheckCredentials:   s.execService.CredentialError,
+		Notify:             notify,
+		Polling:            polling,
+	}
+
+	s.orchestrator = state.NewOrchestrator(ds, oCfg)
+	s.orchestrator.Start()
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

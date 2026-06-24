@@ -149,30 +149,6 @@ func (s *Service) FetchMetrics() (*Report, error) {
 	}, nil
 }
 
-func (s *Service) CachedReport() *Report {
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-
-	if len(s.cache) == 0 {
-		return &Report{Metrics: []*domain_lambda.LambdaMetrics{}, LastUpdated: time.Now()}
-	}
-
-	allMetrics := make([]*domain_lambda.LambdaMetrics, 0, len(s.cache))
-	for _, cached := range s.cache {
-		allMetrics = append(allMetrics, cached.Metrics)
-	}
-	sort.Slice(allMetrics, func(i, j int) bool {
-		return allMetrics[i].TimeoutPercent > allMetrics[j].TimeoutPercent
-	})
-	warnings := 0
-	for _, metric := range allMetrics {
-		if metric.TimeoutPercent >= domain_lambda.TimeoutWarningHigh {
-			warnings++
-		}
-	}
-	return &Report{Metrics: allMetrics, WarningCount: warnings, LastUpdated: time.Now()}
-}
-
 func (s *Service) discover(ctx context.Context) error {
 	now := time.Now()
 

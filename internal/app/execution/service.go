@@ -2,8 +2,6 @@ package execution
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -11,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	app_notification "github.com/EliLillyCo/work-dashboard/internal/app/notification"
 	"github.com/EliLillyCo/work-dashboard/internal/config"
 	domain_execution "github.com/EliLillyCo/work-dashboard/internal/domain/execution"
 	domain_statemachine "github.com/EliLillyCo/work-dashboard/internal/domain/statemachine"
@@ -30,9 +27,8 @@ type ExecutionRepository interface {
 }
 
 type Service struct {
-	repos  map[string]ExecutionRepository
-	cfg    *config.Config
-	notify *app_notification.Service
+	repos map[string]ExecutionRepository
+	cfg   *config.Config
 
 	activeCacheMu sync.Mutex
 	activeCache   map[string][]domain_execution.Summary
@@ -48,27 +44,15 @@ type Service struct {
 	credentialError    bool
 	credentialErrorMsg string
 	credentialErrorAt  time.Time
-
-	flashMu            sync.Mutex
-	flashActiveSeen    map[string]time.Time
-	flashCompletedSeen map[string]time.Time
-	flashFailuresSeen  map[string]time.Time
-
-	completedRenderMu   sync.Mutex
-	completedRenderHash string
 }
 
-func NewService(repos map[string]ExecutionRepository, cfg *config.Config, notify *app_notification.Service) *Service {
+func NewService(repos map[string]ExecutionRepository, cfg *config.Config, _ any) *Service {
 	return &Service{
 		repos:                repos,
 		cfg:                  cfg,
-		notify:               notify,
 		activeCache:          make(map[string][]domain_execution.Summary),
 		activeCacheAt:        make(map[string]time.Time),
 		activeIntervalLogged: make(map[string]time.Duration),
-		flashActiveSeen:      make(map[string]time.Time),
-		flashCompletedSeen:   make(map[string]time.Time),
-		flashFailuresSeen:    make(map[string]time.Time),
 	}
 }
 
@@ -148,14 +132,7 @@ func (s *Service) FetchActive() ([]domain_execution.Summary, error) {
 		return allActive[i].StartTime.After(allActive[j].StartTime)
 	})
 
-	s.flashMu.Lock()
-	allActive = s.markNewExecutions(allActive, s.flashActiveSeen)
-	s.flashMu.Unlock()
-
 	s.setActiveCount(len(allActive))
-	if s.notify != nil {
-		s.notify.ObserveActive(allActive)
-	}
 
 	return allActive, nil
 }
@@ -203,10 +180,6 @@ func (s *Service) FetchRecentCompleted() ([]domain_execution.Summary, error) {
 		return allCompleted[i].StopTime.After(allCompleted[j].StopTime)
 	})
 
-	s.flashMu.Lock()
-	allCompleted = s.markNewExecutions(allCompleted, s.flashCompletedSeen)
-	s.flashMu.Unlock()
-
 	if len(allCompleted) > 50 {
 		allCompleted = allCompleted[:50]
 	}
@@ -241,14 +214,6 @@ func (s *Service) FetchRecentFailures() ([]domain_execution.Summary, error) {
 	sort.Slice(allFailures, func(i, j int) bool {
 		return allFailures[i].StopTime.After(allFailures[j].StopTime)
 	})
-
-	s.flashMu.Lock()
-	allFailures = s.markNewExecutions(allFailures, s.flashFailuresSeen)
-	s.flashMu.Unlock()
-
-	if s.notify != nil {
-		s.notify.ObserveFailures(allFailures)
-	}
 
 	return allFailures, nil
 }
@@ -402,26 +367,6 @@ func (s *Service) CredentialError() (bool, string, time.Time) {
 	return s.credentialError, s.credentialErrorMsg, s.credentialErrorAt
 }
 
-func (s *Service) IsSameCompletedSnapshot(execs []domain_execution.Summary) bool {
-	h := sha1.New()
-	for _, exec := range execs {
-		h.Write([]byte(exec.ExecutionArn))
-		h.Write([]byte(exec.Status))
-		if !exec.StopTime.IsZero() {
-			h.Write([]byte(exec.StopTime.UTC().Format(time.RFC3339Nano)))
-		}
-		h.Write([]byte("|"))
-	}
-	sum := hex.EncodeToString(h.Sum(nil))
-	s.completedRenderMu.Lock()
-	defer s.completedRenderMu.Unlock()
-	if sum == s.completedRenderHash {
-		return true
-	}
-	s.completedRenderHash = sum
-	return false
-}
-
 func markStaleExecutions(src []domain_execution.Summary) []domain_execution.Summary {
 	if len(src) == 0 {
 		return nil
@@ -432,24 +377,6 @@ func markStaleExecutions(src []domain_execution.Summary) []domain_execution.Summ
 		out[i].Stale = true
 	}
 	return out
-}
-
-func (s *Service) markNewExecutions(execs []domain_execution.Summary, seen map[string]time.Time) []domain_execution.Summary {
-	if len(execs) == 0 {
-		return execs
-	}
-	now := time.Now()
-	for i := range execs {
-		key := execs[i].ExecutionArn
-		if key == "" {
-			key = execs[i].Env + "|" + execs[i].Name + "|" + execs[i].ExecutionName
-		}
-		if _, ok := seen[key]; !ok {
-			execs[i].New = true
-		}
-		seen[key] = now
-	}
-	return execs
 }
 
 func (s *Service) setCredentialError(err error) {

@@ -96,7 +96,7 @@ func newServerCommand() *cobra.Command {
 			searchService := app_search.NewService(searchExecRepos, searchObjectRepos, cfg)
 			jokeProvider := infra_jokes.NewClient()
 
-			srv, err := server.NewServer(execService, lambdaService, rdsService, searchService, cfg, staticFS, jokeProvider)
+			srv, err := server.NewServer(execService, lambdaService, rdsService, searchService, cfg, staticFS, jokeProvider, notifyService)
 			if err != nil {
 				return fmt.Errorf("initialize server: %w", err)
 			}
