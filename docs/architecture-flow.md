@@ -3,36 +3,36 @@
 This application follows a **Clean Architecture** style split:
 
 ```sh
-┌───┬────────────────────────────────┬───────────────────────────────────────────────┬───────────────────────────────────────────────────────────────┐
-│ # │             Layer              │                  Package(s)                   │                        Responsibility                         │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 1 │ Composition root               │  `cmd/`                                       │  Wires everything together at startup. Creates infra          │
-│   │                                │                                               │ adapters, app services, and the HTTP server.                  │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 2 │ Delivery / interface adapters  │  `internal/server/`                           │  Handles HTTP, SSE, route registration, request parsing,      │
-│   │                                │                                               │ response rendering, and Datastar fragment updates.            │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 3 │ Presentation adapters          │  `internal/server/render/`                    │  Converts domain/app results into template-friendly view      │
-│   │                                │                                               │ models and renders fragments/templates.                       │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 4 │ Centralized state              │  `internal/state/`                            │  Single source of truth for all dashboard data. The           │
-│   │                                │                                               │ orchestrator fetches data on schedule, updates state           │
-│   │                                │                                               │ atomically, and notifies subscribers of changes.              │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 5 │ Use cases / application layer  │  `internal/app/`                              │  Contains data-fetching logic: execution queries, Lambda      │
-│   │                                │                                               │ discovery + metrics, RDS metrics, search lifecycle,           │
-│   │                                │                                               │ notifications.                                                │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 6 │ Domain                         │  `internal/domain/`                           │  Core business types and pure rules: execution models, state  │
-│   │                                │                                               │ machine rules, search match types, Lambda/RDS domain types.   │
-│   │                                │                                               │ No AWS or HTTP concerns.                                      │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 7 │ Infrastructure                 │  `internal/infra/`                            │  Talks to AWS, desktop notifications, remote joke APIs, and   │
-│   │                                │                                               │ other external systems. Implements the ports used by          │
-│   │                                │                                               │ `internal/app/`.                                              │
-├───┼────────────────────────────────┼───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────┤
-│ 8 │ Shared utility                 │  `internal/config/`                           │  Runtime configuration loading and defaults.                  │
-└───┴────────────────────────────────┴───────────────────────────────────────────────┴───────────────────────────────────────────────────────────────┘
+┌───┬────────────────────────────────┬───────────────────────────────┬───────────────────────────────────────────────────────────────┐
+│ # │             Layer              │                  Package(s)   │                        Responsibility                         │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 1 │ Composition root               │  `cmd/`                       │  Wires everything together at startup. Creates infra          │
+│   │                                │                               │ adapters, app services, and the HTTP server.                  │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 2 │ Delivery / interface adapters  │  `internal/server/`           │  Handles HTTP, SSE, route registration, request parsing,      │
+│   │                                │                               │ response rendering, and Datastar fragment updates.            │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 3 │ Presentation adapters          │  `internal/server/render/`    │  Converts domain/app results into template-friendly view      │
+│   │                                │                               │ models and renders fragments/templates.                       │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 4 │ Centralized state              │  `internal/state/`            │  Single source of truth for all dashboard data. The           │
+│   │                                │                               │ orchestrator fetches data on schedule, updates state          │
+│   │                                │                               │ atomically, and notifies subscribers of changes.              │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 5 │ Use cases / application layer  │  `internal/app/`              │  Contains data-fetching logic: execution queries, Lambda      │
+│   │                                │                               │ discovery + metrics, RDS metrics, search lifecycle,           │
+│   │                                │                               │ notifications.                                                │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 6 │ Domain                         │  `internal/domain/`           │  Core business types and pure rules: execution models, state  │
+│   │                                │                               │ machine rules, search match types, Lambda/RDS domain types.   │
+│   │                                │                               │ No AWS or HTTP concerns.                                      │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 7 │ Infrastructure                 │  `internal/infra/`            │  Talks to AWS, desktop notifications, remote joke APIs, and   │
+│   │                                │                               │ other external systems. Implements the ports used by          │
+│   │                                │                               │ `internal/app/`.                                              │
+├───┼────────────────────────────────┼───────────────────────────────┼───────────────────────────────────────────────────────────────┤
+│ 8 │ Shared utility                 │  `internal/config/`           │  Runtime configuration loading and defaults.                  │
+└───┴────────────────────────────────┴───────────────────────────────┴───────────────────────────────────────────────────────────────┘
 ```
 
 ## What each area is supposed to do
@@ -85,14 +85,22 @@ This application follows a **Clean Architecture** style split:
 
 ## Clean Architecture mapping
 
-| Clean Architecture term | This repo |
-|---|---|
-| Entities / domain models | `internal/domain/*` |
-| Use cases | `internal/app/*` |
-| State management | `internal/state/*` |
-| Interface adapters | `internal/server/*`, `internal/server/render/*` |
-| Frameworks / drivers | `internal/infra/*`, HTTP runtime, AWS SDK, Datastar |
+```sh
+┌───┬────────────────────────────┬───────────────────────────────────────────────────────┐
+│ # │  Clean Architecture term   │                       This repo                       │
+├───┼────────────────────────────┼───────────────────────────────────────────────────────┤
+│ 1 │  Entities / domain models  │  `internal/domain/*`                                  │
+├───┼────────────────────────────┼───────────────────────────────────────────────────────┤
+│ 2 │  Use cases                 │  `internal/app/*`                                     │
+├───┼────────────────────────────┼───────────────────────────────────────────────────────┤
+│ 3 │  State management          │  `internal/state/*`                                   │
+├───┼────────────────────────────┼───────────────────────────────────────────────────────┤
+│ 4 │  Interface adapters        │  `internal/server/*`, `internal/server/render/*`      │
+├───┼────────────────────────────┼───────────────────────────────────────────────────────┤
+│ 5 │  Frameworks / drivers      │  `internal/infra/*`, HTTP runtime, AWS SDK, Datastar  │
+└───┴────────────────────────────┴───────────────────────────────────────────────────────┘
 
+```
 ---
 
 ## Centralized State Architecture
@@ -101,25 +109,25 @@ The dashboard uses a **server-side Redux** pattern: one store, one writer, subsc
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Orchestrator Goroutine                     │
-│  (single writer — fetches on schedule, updates state)        │
-│                                                              │
-│  Tick (5s) → check which sources are due → fetch in parallel │
-│           → lock state → apply all results atomically        │
-│           → compute section hashes → notify subscribers      │
+│                    Orchestrator Goroutine                   │
+│  (single writer — fetches on schedule, updates state)       │
+│                                                             │
+│  Tick (5s) → check which sources are due → fetch in parallel│
+│           → lock state → apply all results atomically       │
+│           → compute section hashes → notify subscribers     │
 └─────────────────────────────┬───────────────────────────────┘
                               │ Snapshot (only changed sections)
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                     DashboardState                            │
-│  Active | Completed | Failures | RDS | Lambda | StateMachines│
-│  CredentialError | ActiveCount | version                     │
-│  (single RWMutex — one writer, many readers)                 │
+│                     DashboardState                          │
+│  Active | Completed | Failures | RDS | Lambda | StMachines  │
+│  CredentialError | ActiveCount | version                    │
+│  (single RWMutex — one writer, many readers)                │
 └─────────────────────────────┬───────────────────────────────┘
                               │ subscribe/notify
                               ▼
 ┌──────────────────────────────────────────────────────────────┐
-│          SSE Handler (per-client)                             │
+│          SSE Handler (per-client)                            │
 │  Receives Snapshot → renders only changed sections           │
 │  → sends PatchSignals + PatchElements in sequence            │
 └──────────────────────────────────────────────────────────────┘
@@ -135,14 +143,23 @@ The dashboard uses a **server-side Redux** pattern: one store, one writer, subsc
 
 ### Polling intervals
 
-| Section | Default interval | Notes |
-|---|---|---|
-| Active executions | 5s (configurable per-env) | Fastest; drives the orchestrator tick |
-| Completed executions | 5s | Same as active |
-| Recent failures | 5s | Same as active |
-| RDS metrics | 30s active / 30min idle | Adaptive based on active count |
-| Lambda metrics | 60s | Per-function caching within fetch |
-| State machines | 5min | Expensive discovery; slower cycle |
+```sh
+┌───┬────────────────────────┬─────────────────────────────┬─────────────────────────────────────────┐
+│ # │        Section         │      Default interval       │                  Notes                  │
+├───┼────────────────────────┼─────────────────────────────┼─────────────────────────────────────────┤
+│ 1 │  Active executions     │  5s (configurable per-env)  │  Fastest; drives the orchestrator tick  │
+├───┼────────────────────────┼─────────────────────────────┼─────────────────────────────────────────┤
+│ 2 │  Completed executions  │  5s                         │  Same as active                         │
+├───┼────────────────────────┼─────────────────────────────┼─────────────────────────────────────────┤
+│ 3 │  Recent failures       │  5s                         │  Same as active                         │
+├───┼────────────────────────┼─────────────────────────────┼─────────────────────────────────────────┤
+│ 4 │  RDS metrics           │  30s active / 30min idle    │  Adaptive based on active count         │
+├───┼────────────────────────┼─────────────────────────────┼─────────────────────────────────────────┤
+│ 5 │  Lambda metrics        │  60s                        │  Per-function caching within fetch      │
+├───┼────────────────────────┼─────────────────────────────┼─────────────────────────────────────────┤
+│ 6 │  State machines        │  5min                       │  Expensive discovery; slower cycle      │
+└───┴────────────────────────┴─────────────────────────────┴─────────────────────────────────────────┘
+```
 
 ---
 
