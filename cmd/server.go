@@ -10,8 +10,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/EliLillyCo/work-dashboard/internal/aws"
+	app_execution "github.com/EliLillyCo/work-dashboard/internal/app/execution"
+	app_lambda "github.com/EliLillyCo/work-dashboard/internal/app/lambda"
+	app_notification "github.com/EliLillyCo/work-dashboard/internal/app/notification"
+	app_rds "github.com/EliLillyCo/work-dashboard/internal/app/rds"
+	app_search "github.com/EliLillyCo/work-dashboard/internal/app/search"
 	"github.com/EliLillyCo/work-dashboard/internal/config"
+	"github.com/EliLillyCo/work-dashboard/internal/infra/awsclient"
+	infra_jokes "github.com/EliLillyCo/work-dashboard/internal/infra/jokes"
+	infra_lambda "github.com/EliLillyCo/work-dashboard/internal/infra/lambda"
+	infra_notify "github.com/EliLillyCo/work-dashboard/internal/infra/notify"
+	infra_rds "github.com/EliLillyCo/work-dashboard/internal/infra/rds"
+	infra_s3 "github.com/EliLillyCo/work-dashboard/internal/infra/s3"
+	infra_sfn "github.com/EliLillyCo/work-dashboard/internal/infra/sfn"
 	"github.com/EliLillyCo/work-dashboard/internal/server"
 	"github.com/spf13/cobra"
 )
@@ -54,14 +65,41 @@ func newServerCommand() *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			awsManager, err := aws.NewClientManager(ctx, cfg)
+			awsManager, err := awsclient.NewClientManager(ctx, cfg)
 			if err != nil {
 				return fmt.Errorf("initialize AWS manager: %w", err)
 			}
 
 			addr, _ := cmd.Flags().GetString("addr")
 
-			srv := server.NewServer(awsManager, staticFS, cfg)
+			execRepos := make(map[string]app_execution.ExecutionRepository, len(awsManager.Clients))
+			lambdaExecRepos := make(map[string]app_lambda.ExecutionRepository, len(awsManager.Clients))
+			lambdaRepos := make(map[string]app_lambda.LambdaRepository, len(awsManager.Clients))
+			rdsRepos := make(map[string]app_rds.RDSRepository, len(awsManager.Clients))
+			searchExecRepos := make(map[string]app_search.ExecutionSearchRepository, len(awsManager.Clients))
+			searchObjectRepos := make(map[string]app_search.ObjectSearchRepository, len(awsManager.Clients))
+
+			for env, client := range awsManager.Clients {
+				sfnRepo := infra_sfn.NewRepository(client)
+				execRepos[env] = sfnRepo
+				lambdaExecRepos[env] = sfnRepo
+				searchExecRepos[env] = sfnRepo
+				lambdaRepos[env] = infra_lambda.NewRepository(client)
+				rdsRepos[env] = infra_rds.NewRepository(client)
+				searchObjectRepos[env] = infra_s3.NewRepository(client)
+			}
+
+			notifyService := app_notification.NewService(infra_notify.NewNotifier())
+			execService := app_execution.NewService(execRepos, cfg, notifyService)
+			lambdaService := app_lambda.NewService(lambdaExecRepos, lambdaRepos, execService.ActiveCount)
+			rdsService := app_rds.NewService(rdsRepos, cfg, execService.ActiveCount)
+			searchService := app_search.NewService(searchExecRepos, searchObjectRepos, cfg)
+			jokeProvider := infra_jokes.NewClient()
+
+			srv, err := server.NewServer(execService, lambdaService, rdsService, searchService, cfg, staticFS, jokeProvider)
+			if err != nil {
+				return fmt.Errorf("initialize server: %w", err)
+			}
 			httpServer := &http.Server{
 				Addr:    addr,
 				Handler: srv,

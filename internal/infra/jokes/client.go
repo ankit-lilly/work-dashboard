@@ -1,4 +1,4 @@
-package server
+package jokes
 
 import (
 	"context"
@@ -8,42 +8,57 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 const jeffDeanFactsURL = "https://raw.githubusercontent.com/LRitzdorf/TheJeffDeanFacts/refs/heads/main/README.md"
 const chuckNorrisURL = "https://api.chucknorris.io/jokes/random"
 
+type Provider interface {
+	Random(context.Context) string
+}
+
+type Client struct {
+	mu          sync.Mutex
+	chuckJoke   string
+	chuckJokeAt time.Time
+	jeffJoke    string
+	jeffJokeAt  time.Time
+}
+
 type chuckJokeResponse struct {
 	Value string `json:"value"`
 }
 
-func (s *Server) getFunJoke(ctx context.Context) string {
-	// 50/50 split, fallback to the other source on failure.
-	if rand.Intn(2) == 0 {
-		if joke := s.getJeffDeanFact(ctx); joke != "" {
-			return joke
-		}
-		return s.getChuckNorrisJoke(ctx)
-	}
-	if joke := s.getChuckNorrisJoke(ctx); joke != "" {
-		return joke
-	}
-	return s.getJeffDeanFact(ctx)
+func NewClient() *Client {
+	return &Client{}
 }
 
-func (s *Server) getChuckNorrisJoke(ctx context.Context) string {
-	s.jokeMu.Lock()
-	if s.chuckJoke != "" && time.Since(s.chuckJokeAt) < 30*time.Minute {
-		joke := s.chuckJoke
-		s.jokeMu.Unlock()
+func (c *Client) Random(ctx context.Context) string {
+	if rand.Intn(2) == 0 {
+		if joke := c.getJeffDeanFact(ctx); joke != "" {
+			return joke
+		}
+		return c.getChuckNorrisJoke(ctx)
+	}
+	if joke := c.getChuckNorrisJoke(ctx); joke != "" {
 		return joke
 	}
-	s.jokeMu.Unlock()
+	return c.getJeffDeanFact(ctx)
+}
+
+func (c *Client) getChuckNorrisJoke(ctx context.Context) string {
+	c.mu.Lock()
+	if c.chuckJoke != "" && time.Since(c.chuckJokeAt) < 30*time.Minute {
+		joke := c.chuckJoke
+		c.mu.Unlock()
+		return joke
+	}
+	c.mu.Unlock()
 
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, chuckNorrisURL, nil)
 	if err != nil {
 		return ""
@@ -68,26 +83,24 @@ func (s *Server) getChuckNorrisJoke(ctx context.Context) string {
 		return ""
 	}
 
-	s.jokeMu.Lock()
-	s.chuckJoke = joke
-	s.chuckJokeAt = time.Now()
-	s.jokeMu.Unlock()
-
+	c.mu.Lock()
+	c.chuckJoke = joke
+	c.chuckJokeAt = time.Now()
+	c.mu.Unlock()
 	return joke
 }
 
-func (s *Server) getJeffDeanFact(ctx context.Context) string {
-	s.jokeMu.Lock()
-	if s.jeffJoke != "" && time.Since(s.jeffJokeAt) < 30*time.Minute {
-		joke := s.jeffJoke
-		s.jokeMu.Unlock()
+func (c *Client) getJeffDeanFact(ctx context.Context) string {
+	c.mu.Lock()
+	if c.jeffJoke != "" && time.Since(c.jeffJokeAt) < 30*time.Minute {
+		joke := c.jeffJoke
+		c.mu.Unlock()
 		return joke
 	}
-	s.jokeMu.Unlock()
+	c.mu.Unlock()
 
 	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, jeffDeanFactsURL, nil)
 	if err != nil {
 		return ""
@@ -112,17 +125,15 @@ func (s *Server) getJeffDeanFact(ctx context.Context) string {
 	if err != nil || len(facts) == 0 {
 		return ""
 	}
-
 	joke := strings.TrimSpace(facts[rand.Intn(len(facts))])
 	if joke == "" {
 		return ""
 	}
 
-	s.jokeMu.Lock()
-	s.jeffJoke = joke
-	s.jeffJokeAt = time.Now()
-	s.jokeMu.Unlock()
-
+	c.mu.Lock()
+	c.jeffJoke = joke
+	c.jeffJokeAt = time.Now()
+	c.mu.Unlock()
 	return joke
 }
 

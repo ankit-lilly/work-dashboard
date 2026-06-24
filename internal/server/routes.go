@@ -2,55 +2,31 @@ package server
 
 import (
 	"context"
-	"io/fs"
 	"net/http"
+	"path"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/EliLillyCo/work-dashboard/internal/aws"
+	domain_statemachine "github.com/EliLillyCo/work-dashboard/internal/domain/statemachine"
+	"github.com/EliLillyCo/work-dashboard/internal/server/render"
 )
-
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	mux := http.NewServeMux()
-
-	staticRoot, err := fs.Sub(s.staticFS, "static")
-	if err != nil {
-		http.Error(w, "static assets not available", http.StatusInternalServerError)
-		return
-	}
-
-	mux.HandleFunc("/", s.handleIndex)
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticRoot))))
-	mux.HandleFunc("/api/dashboard-updates", s.handleDashboardUpdates)
-	mux.HandleFunc("/api/record-search", s.handleRecordSearch)
-	mux.HandleFunc("/api/record-search-cancel", s.handleRecordSearchCancel)
-	mux.HandleFunc("/api/state-machine-executions", s.handleStateMachineExecutions)
-	mux.HandleFunc("/api/s3-preview-modal", s.handleS3PreviewModal)
-	mux.HandleFunc("/api/execution-states", s.handleExecutionStatesModal)
-	mux.HandleFunc("/view/json", s.handleS3ViewJSON)
-	mux.HandleFunc("/api/s3-download", s.handleS3Download)
-	mux.HandleFunc("/api/s3-search", s.handleS3Search)
-	mux.HandleFunc("/api/s3-prefix-list", s.handleS3PrefixList)
-	mux.HandleFunc("/api/s3-preview", s.handleS3Preview)
-
-	mux.ServeHTTP(w, r)
-}
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	prodClient, ok := s.awsManager.Clients["prod"]
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	type dashboardData struct {
-		activeJobs         []aws.Execution
-		recentCompleted    []aws.Execution
-		recentFailures     []aws.Execution
-		stateMachines      []StateMachineItem
+		activeJobs         []render.ExecutionView
+		recentCompleted    []render.ExecutionView
+		recentFailures     []render.ExecutionView
+		stateMachines      []domain_statemachine.StateMachine
 		activeJobsErr      error
 		recentCompletedErr error
 		recentFailuresErr  error
@@ -65,28 +41,25 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			if !ok || prodClient == nil {
-				return
-			}
-			data.activeJobs, data.activeJobsErr = prodClient.ListActiveExecutions(ctx)
+			active, err := s.execService.FetchActive()
+			data.activeJobs = render.PresentExecutions(active)
+			data.activeJobsErr = err
 		}()
-
 		go func() {
 			defer wg.Done()
-			data.recentCompleted, data.recentCompletedErr = s.fetchRecentCompleted()
+			completed, err := s.execService.FetchRecentCompleted()
+			data.recentCompleted = render.PresentExecutions(completed)
+			data.recentCompletedErr = err
 		}()
-
 		go func() {
 			defer wg.Done()
-			if !ok || prodClient == nil {
-				return
-			}
-			data.recentFailures, data.recentFailuresErr = prodClient.ListRecentFailures(ctx)
+			failures, err := s.execService.FetchRecentFailures()
+			data.recentFailures = render.PresentExecutions(failures)
+			data.recentFailuresErr = err
 		}()
-
 		go func() {
 			defer wg.Done()
-			data.stateMachines, data.stateMachinesErr = s.fetchStateMachines()
+			data.stateMachines, data.stateMachinesErr = s.execService.FetchStateMachines()
 		}()
 
 		wg.Wait()
@@ -95,26 +68,43 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case data := <-resultCh:
-		s.render(w, "index", map[string]any{
-			"ActiveNav":       "dashboard",
-			"ActiveJobs":      data.activeJobs,
-			"ActiveJobsError": data.activeJobsErr,
-			"ActiveJobsJoke": func() string {
-				if len(data.activeJobs) == 0 {
-					return s.getFunJoke(ctx)
-				}
-				return ""
-			}(),
-			"RecentCompleted":      data.recentCompleted,
-			"RecentCompletedError": data.recentCompletedErr,
-			"RecentFailures":       data.recentFailures,
-			"RecentFailuresError":  data.recentFailuresErr,
-			"StateMachines":        data.stateMachines,
-			"StateMachinesError":   data.stateMachinesErr,
+		joke := ""
+		if len(data.activeJobs) == 0 && s.jokeProvider != nil {
+			joke = s.jokeProvider.Random(ctx)
+		}
+		s.renderer.Render(w, "index", render.DashboardPageData{
+			ActiveNav:            "dashboard",
+			ActiveJobs:           data.activeJobs,
+			ActiveJobsError:      data.activeJobsErr,
+			ActiveJobsJoke:       joke,
+			RecentCompleted:      data.recentCompleted,
+			RecentCompletedError: data.recentCompletedErr,
+			RecentFailures:       data.recentFailures,
+			RecentFailuresError:  data.recentFailuresErr,
+			StateMachines:        data.stateMachines,
+			StateMachinesError:   data.stateMachinesErr,
 		})
 	case <-ctx.Done():
-		s.render(w, "index", map[string]any{
-			"ActiveNav": "dashboard",
-		})
+		s.renderer.Render(w, "index", render.DashboardPageData{ActiveNav: "dashboard"})
 	}
+}
+
+func parseIntOrDefault(val string, def int) int {
+	if val == "" {
+		return def
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+func sanitizeFilename(filename string) string {
+	filename = path.Base(filename)
+	filename = strings.ReplaceAll(filename, "\"", "")
+	filename = strings.ReplaceAll(filename, "\n", "")
+	filename = strings.ReplaceAll(filename, "\r", "")
+	filename = strings.ReplaceAll(filename, "\\", "")
+	return filename
 }
