@@ -197,7 +197,11 @@
                             </option>
                             {{end}}
                             {{else}}
+                            {{if .StateMachinesError}}
+                            <option disabled>Error loading state machines: {{.StateMachinesError}}</option>
+                            {{else}}
                             <option disabled>No state machines found</option>
+                            {{end}}
                             {{end}}
                         </select>
                     </div>

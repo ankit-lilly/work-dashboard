@@ -40,6 +40,10 @@ type Client struct {
 	execCacheMu sync.Mutex
 	execCache   map[execCacheKey]execCacheEntry
 	execLimiter *rate.Limiter
+
+	// smNamePrefixes is the allow-list of name prefixes used to filter state machines.
+	// Empty means use the built-in defaults from includeStateMachineName.
+	smNamePrefixes []string
 }
 
 type ClientManager struct {
@@ -77,17 +81,18 @@ func NewClientManager(ctx context.Context, cfg *config.Config) (*ClientManager, 
 		}
 
 		client := &Client{
-			EnvName:     mapping.Name,
-			Config:      awsCfg,
-			Sfn:         sfn.NewFromConfig(awsCfg),
-			S3:          s3.NewFromConfig(awsCfg),
-			Logs:        cloudwatchlogs.NewFromConfig(awsCfg),
-			RDS:         rds.NewFromConfig(awsCfg),
-			PI:          pi.NewFromConfig(awsCfg),
-			CW:          cloudwatch.NewFromConfig(awsCfg),
-			Lambda:      lambda.NewFromConfig(awsCfg),
-			execCache:   make(map[execCacheKey]execCacheEntry),
-			execLimiter: rate.NewLimiter(rate.Every(200*time.Millisecond), 5),
+			EnvName:        mapping.Name,
+			Config:         awsCfg,
+			Sfn:            sfn.NewFromConfig(awsCfg),
+			S3:             s3.NewFromConfig(awsCfg),
+			Logs:           cloudwatchlogs.NewFromConfig(awsCfg),
+			RDS:            rds.NewFromConfig(awsCfg),
+			PI:             pi.NewFromConfig(awsCfg),
+			CW:             cloudwatch.NewFromConfig(awsCfg),
+			Lambda:         lambda.NewFromConfig(awsCfg),
+			execCache:      make(map[execCacheKey]execCacheEntry),
+			execLimiter:    rate.NewLimiter(rate.Every(200*time.Millisecond), 5),
+			smNamePrefixes: cfg.StateMachineNamePrefixes,
 		}
 
 		manager.Clients[mapping.Name] = client

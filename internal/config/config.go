@@ -19,6 +19,9 @@ type Config struct {
 	Envs    []EnvMapping
 	Polling PollingConfig
 	Limits  LimitsConfig
+	// StateMachineNamePrefixes limits which state machines appear in the dashboard.
+	// Set via SM_NAME_PREFIXES (comma-separated). Empty means use built-in defaults.
+	StateMachineNamePrefixes []string
 }
 
 type PollingConfig struct {
@@ -75,6 +78,15 @@ func LoadConfig() (*Config, error) {
 
 	applyPollingEnv(config)
 	applyLimitsEnv(config)
+
+	if raw := strings.TrimSpace(os.Getenv("SM_NAME_PREFIXES")); raw != "" {
+		for _, p := range strings.Split(raw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				config.StateMachineNamePrefixes = append(config.StateMachineNamePrefixes, p)
+			}
+		}
+	}
+
 	return config, nil
 }
 

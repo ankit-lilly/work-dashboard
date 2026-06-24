@@ -277,7 +277,7 @@ func (c *Client) getStateMachines(ctx context.Context, ttl time.Duration) ([]typ
 			return nil, err
 		}
 		for _, sm := range out.StateMachines {
-			if includeStateMachineName(sm.Name) {
+			if c.includeStateMachineName(sm.Name) {
 				all = append(all, sm)
 			}
 		}
@@ -386,12 +386,27 @@ func randomTTL(min, max time.Duration) time.Duration {
 	return min + time.Duration(rand.Int63n(int64(delta)))
 }
 
-func includeStateMachineName(name *string) bool {
+// includeStateMachineName reports whether the state machine should appear in the dashboard.
+// If the client was configured with explicit name prefixes (SM_NAME_PREFIXES), any state machine
+// whose name starts with one of those prefixes is included. When no prefixes are configured the
+// built-in defaults are used so that existing deployments are unaffected.
+func (c *Client) includeStateMachineName(name *string) bool {
 	if name == nil {
 		return false
 	}
 	n := *name
 
+	// Custom prefix list configured via SM_NAME_PREFIXES — match any prefix, no suffix filtering.
+	if len(c.smNamePrefixes) > 0 {
+		for _, prefix := range c.smNamePrefixes {
+			if strings.HasPrefix(n, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Built-in defaults (unchanged behaviour for existing deployments).
 	if !strings.HasPrefix(n, "mdids-account-automation-relv305-backend") &&
 		!strings.HasPrefix(n, "mdids-account-automation-backend") &&
 		!strings.HasPrefix(n, "atom5-qa-stack-") &&
