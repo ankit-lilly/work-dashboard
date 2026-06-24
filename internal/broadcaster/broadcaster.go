@@ -103,3 +103,9 @@ func (b *Broadcaster[T]) ClientCount() int {
 	defer b.mu.RUnlock()
 	return len(b.clients)
 }
+
+func (b *Broadcaster[T]) Current() (T, bool) {
+	b.currentMu.RLock()
+	defer b.currentMu.RUnlock()
+	return b.current, b.hasValue
+}

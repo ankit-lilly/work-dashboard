@@ -3,6 +3,9 @@
      data-signals="{
          json_modal_open: false,
          states_modal_open: false,
+         statesEnv: '',
+         statesArn: '',
+         statesReq: 0,
          rds_info_modal_open: false,
          credential_error: false,
          credential_error_msg: '',
@@ -32,7 +35,8 @@
          lambda_warnings: 0,
          lambda_count: 0,
          lambdaEnv: 'all',
-         lambdaSearch: ''
+         lambdaSearch: '',
+         smList: []
      }"
      data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
 
@@ -171,38 +175,39 @@
                             <option value="prod">Prod</option>
                         </select>
                         <select id="sm-select" aria-label="Select state machine"
-                            class="select select-sm select-bordered join-item min-w-[250px]"
+                            class="select select-sm select-bordered join-item min-w-[250px] max-w-[400px] truncate"
                             data-bind="selectedSm"
-                            data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; @get('/api/state-machine-executions?env=' + opt.dataset.env + '&arn=' + evt.target.value, {openWhenHidden: true, requestCancellation: 'disabled'}) }"
+                            data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; @get('/api/state-machine-executions?env=' + opt.dataset.env + '&arn=' + evt.target.value, {openWhenHidden: true}) }"
                             data-indicator:sm_exec_loading
                             data-effect="
-                                const searchTerm = ($smSearch || '').toLowerCase().trim();
-                                for (const opt of el.options) {
-                                    if (!opt.dataset.baseEnv) continue;
-                                    const envMatch = ($smEnv === 'all' || $smEnv === opt.dataset.baseEnv);
-                                    const searchMatch = searchTerm === '' || opt.textContent.toLowerCase().includes(searchTerm);
-                                    opt.style.display = (envMatch && searchMatch) ? '' : 'none';
-                                }
-                                if (el.selectedOptions[0]?.style.display === 'none') {
+                                const env = $smEnv;
+                                const search = ($smSearch || '').toLowerCase().trim();
+                                const list = $smList || [];
+                                const prev = el.value;
+                                const filtered = list.filter(sm => {
+                                    const envMatch = env === 'all' || sm.baseEnv === env;
+                                    const searchMatch = search === '' || (sm.name + ' ' + sm.env).toLowerCase().includes(search);
+                                    return envMatch && searchMatch;
+                                });
+                                const placeholder = document.createElement('option');
+                                placeholder.value = '';
+                                placeholder.textContent = filtered.length === 0 && list.length > 0 ? 'No matches' : 'Select a state machine...';
+                                const opts = [placeholder, ...filtered.map(sm => {
+                                    const o = document.createElement('option');
+                                    o.value = sm.arn;
+                                    o.dataset.env = sm.env;
+                                    o.dataset.baseEnv = sm.baseEnv;
+                                    o.textContent = sm.name + ' (' + sm.env + ')';
+                                    return o;
+                                })];
+                                el.replaceChildren(...opts);
+                                if (prev && filtered.find(sm => sm.arn === prev)) {
+                                    el.value = prev;
+                                } else {
                                     el.value = '';
+                                    $selectedSm = '';
                                 }
                             ">
-                            <option value="">Select a state machine...</option>
-                            {{if .StateMachines}}
-                            {{range .StateMachines}}
-                            <option value="{{.Arn}}"
-                                    data-env="{{.Env}}"
-                                    data-base-env="{{.BaseEnv}}">
-                                {{.Name}} ({{.Env}})
-                            </option>
-                            {{end}}
-                            {{else}}
-                            {{if .StateMachinesError}}
-                            <option disabled>Error loading state machines: {{.StateMachinesError}}</option>
-                            {{else}}
-                            <option disabled>No state machines found</option>
-                            {{end}}
-                            {{end}}
                         </select>
                     </div>
                 </div>
@@ -407,9 +412,13 @@
             </div>
         </details>
     </section>
+
+<!-- States modal trigger - stable element never morphed by SSE -->
+<div id="states-trigger" class="hidden"
+     data-effect="const r = $statesReq; if (r > 0) { @get('/api/execution-states?env=' + $statesEnv + '&arn=' + $statesArn + '&target_id=states-modal-content', {openWhenHidden: true}) }">
 </div>
 
-<!-- Modals - Outside SSE update scope to prevent morphing glitches -->
+<!-- Modals -->
 <dialog class="modal" data-class="{'modal-open': $json_modal_open}">
     <div class="modal-box max-w-5xl">
         <form method="dialog">
@@ -434,7 +443,7 @@
         </form>
         <h3 class="font-semibold text-lg mb-4">Execution States</h3>
         <div id="states-modal-content" class="min-h-[120px]">
-            <div class="p-4 text-sm text-base-content/60">Loading...</div>
+            <div class="p-4 text-sm text-base-content/60">Select an execution and click View States.</div>
         </div>
     </div>
     <form method="dialog" class="modal-backdrop">
@@ -627,4 +636,5 @@
         <button data-on:click="$rds_query_modal_open = false">close</button>
     </form>
 </dialog>
+</div>
 {{end}}

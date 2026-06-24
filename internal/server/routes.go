@@ -30,7 +30,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		activeJobsErr      error
 		recentCompletedErr error
 		recentFailuresErr  error
-		stateMachinesErr   error
 	}
 
 	resultCh := make(chan dashboardData, 1)
@@ -59,7 +58,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}()
 		go func() {
 			defer wg.Done()
-			data.stateMachines, data.stateMachinesErr = s.execService.FetchStateMachines()
+			data.stateMachines, _ = s.execService.FetchStateMachines()
 		}()
 
 		wg.Wait()
@@ -82,7 +81,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			RecentFailures:       data.recentFailures,
 			RecentFailuresError:  data.recentFailuresErr,
 			StateMachines:        data.stateMachines,
-			StateMachinesError:   data.stateMachinesErr,
 		})
 	case <-ctx.Done():
 		s.renderer.Render(w, "index", render.DashboardPageData{ActiveNav: "dashboard"})

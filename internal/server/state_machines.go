@@ -28,25 +28,19 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !appendMode {
-		html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions-loading", nil)
-		if err == nil {
-			sse.PatchElements(html, datastar.WithSelector("#state-machine-executions-content"), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	details, execErr := s.execService.ListStateMachineExecutions(ctx, env, arn, count)
-	items := render.PresentStateMachineExecutions(details)
-	total := len(items)
-	hasMore := total >= count && count < 100
-	nextCount := count + 10
-	if nextCount > 100 {
-		nextCount = 100
-	}
-
+	// Append mode: one-shot fetch for "Load more"
 	if appendMode {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		details, _ := s.execService.ListStateMachineExecutions(ctx, env, arn, count)
+		items := render.PresentStateMachineExecutions(details)
+		total := len(items)
+		hasMore := total >= count && count < 100
+		nextCount := count + 10
+		if nextCount > 100 {
+			nextCount = 100
+		}
+
 		if offset < 0 {
 			offset = 0
 		}
@@ -74,6 +68,40 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Show loading indicator
+	html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions-loading", nil)
+	if err == nil {
+		sse.PatchElements(html, datastar.WithSelector("#state-machine-executions-content"), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
+	}
+
+	// Streaming mode: fetch immediately, then poll every 10s
+	s.fetchAndRenderExecutions(sse, r.Context(), env, arn, count)
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			s.fetchAndRenderExecutions(sse, r.Context(), env, arn, count)
+		}
+	}
+}
+
+func (s *Server) fetchAndRenderExecutions(sse *datastar.ServerSentEventGenerator, ctx context.Context, env, arn string, count int) {
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	details, execErr := s.execService.ListStateMachineExecutions(fetchCtx, env, arn, count)
+	items := render.PresentStateMachineExecutions(details)
+	total := len(items)
+	hasMore := total >= count && count < 100
+	nextCount := count + 10
+	if nextCount > 100 {
+		nextCount = 100
+	}
+
 	html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions", map[string]any{
 		"Env":        env,
 		"Arn":        arn,
@@ -98,9 +126,27 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	// Fetch and render immediately
+	s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
+
+	// Poll every 5s for live updates
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
+		}
+	}
+}
+
+func (s *Server) fetchAndRenderStates(sse *datastar.ServerSentEventGenerator, ctx context.Context, env, arn, targetID string) {
+	fetchCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	stateMachine, states, err := s.execService.GetExecutionStates(ctx, env, arn)
+
+	stateMachine, states, err := s.execService.GetExecutionStates(fetchCtx, env, arn)
 	payload := render.ExecutionStatesPayload{
 		Env:          env,
 		ExecutionArn: arn,

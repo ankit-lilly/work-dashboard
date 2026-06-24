@@ -250,6 +250,25 @@
 </div>
 {{end}}
 
+{{define "state-machine-options"}}
+<option value="">Select a state machine...</option>
+{{if .StateMachines}}
+{{range .StateMachines}}
+<option value="{{.Arn}}"
+        data-env="{{.Env}}"
+        data-base-env="{{.BaseEnv}}">
+    {{.Name}} ({{.Env}})
+</option>
+{{end}}
+{{else}}
+{{if .StateMachinesError}}
+<option disabled>Error loading state machines: {{.StateMachinesError}}</option>
+{{else}}
+<option disabled>No state machines found</option>
+{{end}}
+{{end}}
+{{end}}
+
 {{define "state-machines-list"}}
 <div class="divide-y divide-base-200">
     {{if .Items}}
@@ -426,7 +445,7 @@
             <button type="button" class="btn btn-outline btn-xs"
                 data-indicator:sm_exec_loading
                 data-class="{'btn-disabled': $sm_exec_loading}"
-                data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}&append=1&offset={{.Count}}', {openWhenHidden: true, requestCancellation: 'disabled'})">
+                data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}&append=1&offset={{.Count}}', {openWhenHidden: true})">>
                 <span data-show="!$sm_exec_loading">Load more</span>
                 <span data-show="$sm_exec_loading" class="inline-flex items-center gap-1" style="display:none">
                     <span class="loading loading-spinner loading-xs"></span>
@@ -524,7 +543,7 @@
 {{define "states-viewer-link"}}
 <button type="button"
         class="link link-primary"
-        data-on:click="$states_modal_open = true; @get('/api/execution-states?env={{.Env}}&arn={{.ExecutionArn}}&target_id=states-modal-content', {openWhenHidden: true, requestCancellation: 'disabled'})">
+        data-on:click="$statesEnv = '{{.Env}}'; $statesArn = '{{.ExecutionArn}}'; $statesReq = $statesReq + 1; $states_modal_open = true">
     View States
 </button>
 {{end}}

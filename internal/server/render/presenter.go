@@ -28,8 +28,7 @@ type DashboardPageData struct {
 	RecentFailures      []ExecutionView
 	RecentFailuresError error
 
-	StateMachines      []domain_statemachine.StateMachine
-	StateMachinesError error
+	StateMachines []domain_statemachine.StateMachine
 }
 
 type ExecutionView struct {

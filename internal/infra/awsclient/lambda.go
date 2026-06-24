@@ -1,4 +1,4 @@
-package aws
+package awsclient
 
 import (
 	"context"
@@ -11,12 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
-)
-
-const (
-	TimeoutWarningHigh   = 90.0 // Red warning
-	TimeoutWarningMedium = 80.0 // Yellow warning
-	TimeoutHealthy       = 70.0 // Green
 )
 
 // InvocationRecord tracks a single Lambda invocation from execution history
@@ -181,76 +175,6 @@ func (c *Client) GetLambdaMetrics(ctx context.Context, functionName string, used
 	return metrics, nil
 }
 
-// GetTimeoutSeconds returns the timeout in seconds as an int for easier display
-func (m *LambdaMetrics) GetTimeoutSeconds() int {
-	return int(m.Timeout)
-}
-
-// GetTimeoutMillis returns the timeout in milliseconds for comparison
-func (m *LambdaMetrics) GetTimeoutMillis() int64 {
-	return int64(m.Timeout) * 1000
-}
-
-// FormatAvgDuration returns formatted average duration (e.g., "2.5s" or "450ms")
-func (m *LambdaMetrics) FormatAvgDuration() string {
-	return FormatDuration(m.AvgDuration)
-}
-
-// FormatMaxDuration returns formatted max duration
-func (m *LambdaMetrics) FormatMaxDuration() string {
-	return FormatDuration(m.MaxDuration)
-}
-
-// FormatRecentDuration returns formatted recent duration
-func (m *LambdaMetrics) FormatRecentDuration() string {
-	return FormatDuration(m.RecentDuration)
-}
-
-// FormatTimeout returns formatted timeout (e.g., "30s" or "1m30s")
-func (m *LambdaMetrics) FormatTimeout() string {
-	seconds := int(m.Timeout)
-	if seconds < 60 {
-		return fmt.Sprintf("%ds", seconds)
-	}
-	minutes := seconds / 60
-	remainingSeconds := seconds % 60
-	if remainingSeconds == 0 {
-		return fmt.Sprintf("%dm", minutes)
-	}
-	return fmt.Sprintf("%dm%ds", minutes, remainingSeconds)
-}
-
-// parseMemoryFromLogMessage extracts memory usage from Lambda REPORT log line
-// Example: "REPORT RequestId: abc-123 Duration: 1234.56 ms ... Max Memory Used: 128 MB"
-// DEPRECATED: Now using CloudWatch Logs Insights queries instead
-func parseMemoryFromLogMessage(message string) int32 {
-	// Look for "Max Memory Used: XXX MB"
-	idx := strings.Index(message, "Max Memory Used:")
-	if idx == -1 {
-		return 0
-	}
-
-	// Extract the number after "Max Memory Used:"
-	substr := message[idx+len("Max Memory Used:"):]
-	// Find the MB marker
-	mbIdx := strings.Index(substr, "MB")
-	if mbIdx == -1 {
-		return 0
-	}
-
-	// Extract number between "Max Memory Used:" and "MB"
-	numStr := strings.TrimSpace(substr[:mbIdx])
-
-	// Parse the integer
-	var memMB int32
-	_, err := fmt.Sscanf(numStr, "%d", &memMB)
-	if err != nil {
-		return 0
-	}
-
-	return memMB
-}
-
 // ExtractLambdaArnFromResource extracts Lambda function name from various ARN formats
 // Handles both Lambda ARNs and state machine resource references
 func ExtractLambdaArnFromResource(resource string) (string, bool) {
@@ -274,40 +198,6 @@ func ExtractLambdaArnFromResource(resource string) (string, bool) {
 	}
 
 	return "", false
-}
-
-// GetFunctionNameFromArn extracts the function name from a Lambda ARN
-func GetFunctionNameFromArn(arn string) string {
-	if arn == "" {
-		return ""
-	}
-
-	// ARN format: arn:aws:lambda:region:account-id:function:function-name
-	parts := strings.Split(arn, ":")
-	if len(parts) >= 7 && parts[5] == "function" {
-		return strings.Join(parts[6:], ":")
-	}
-
-	// If not an ARN, return as-is (might already be a function name)
-	if !strings.Contains(arn, ":") {
-		return arn
-	}
-
-	return ""
-}
-
-// FormatDuration formats milliseconds into human-readable duration
-func FormatDuration(ms int64) string {
-	if ms < 1000 {
-		return fmt.Sprintf("%dms", ms)
-	}
-	seconds := float64(ms) / 1000.0
-	if seconds < 60 {
-		return fmt.Sprintf("%.2fs", seconds)
-	}
-	minutes := int(seconds / 60)
-	remainingSeconds := int(seconds) % 60
-	return fmt.Sprintf("%dm%ds", minutes, remainingSeconds)
 }
 
 // InvocationData represents a single Lambda invocation from CloudWatch Logs

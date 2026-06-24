@@ -1,10 +1,9 @@
-package aws
+package awsclient
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -622,10 +621,4 @@ func isPermissionError(err error) bool {
 		strings.Contains(errStr, "UnauthorizedOperation") ||
 		strings.Contains(errStr, "AccessDeniedException") ||
 		strings.Contains(errStr, "UnauthorizedException")
-}
-
-// roundFloat rounds a float to n decimal places
-func roundFloat(val float64, precision int) float64 {
-	ratio := math.Pow(10, float64(precision))
-	return math.Round(val*ratio) / ratio
 }

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	legacyaws "github.com/EliLillyCo/work-dashboard/internal/aws"
 	domain_execution "github.com/EliLillyCo/work-dashboard/internal/domain/execution"
 	domain_lambda "github.com/EliLillyCo/work-dashboard/internal/domain/lambda"
 	domain_statemachine "github.com/EliLillyCo/work-dashboard/internal/domain/statemachine"
@@ -290,7 +289,7 @@ func (r *Repository) ExtractLambdaInvocations(ctx context.Context, executionArn 
 	return resources, nil
 }
 
-func mapExecutionSummaries(items []legacyaws.Execution) []domain_execution.Summary {
+func mapExecutionSummaries(items []awsclient.Execution) []domain_execution.Summary {
 	out := make([]domain_execution.Summary, 0, len(items))
 	for _, item := range items {
 		out = append(out, domain_execution.Summary{

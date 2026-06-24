@@ -1,11 +1,13 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	app_lambda "github.com/EliLillyCo/work-dashboard/internal/app/lambda"
+	domain_statemachine "github.com/EliLillyCo/work-dashboard/internal/domain/statemachine"
 	"github.com/EliLillyCo/work-dashboard/internal/server/render"
 	"github.com/starfederation/datastar-go/datastar"
 )
@@ -24,6 +26,8 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	defer s.rdsBroadcaster.Unsubscribe(rdsCh)
 	lambdaCh := s.lambdaBroadcaster.Subscribe()
 	defer s.lambdaBroadcaster.Unsubscribe(lambdaCh)
+	smCh := s.stateMachinesBroadcaster.Subscribe()
+	defer s.stateMachinesBroadcaster.Unsubscribe(smCh)
 
 	if hasError, errMsg, _ := s.execService.CredentialError(); hasError {
 		sse.PatchSignals([]byte(fmt.Sprintf(`{"credential_error": true, "credential_error_msg": %q}`, errMsg)))
@@ -31,6 +35,7 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	sse.PatchSignals([]byte(`{"rds_loading": true, "rds_db_count": 0, "lambda_warnings": 0, "lambda_count": 0}`))
 	s.sendCachedRDSMetrics(sse)
 	s.sendCachedLambdaMetrics(sse)
+	s.sendCachedStateMachines(sse)
 
 	for {
 		select {
@@ -112,6 +117,11 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			s.renderLambdaReport(sse, report)
+		case sms, ok := <-smCh:
+			if !ok {
+				return
+			}
+			s.renderStateMachineOptions(sse, sms, nil)
 		}
 	}
 }
@@ -158,4 +168,36 @@ func (s *Server) sendCachedRDSMetrics(sse *datastar.ServerSentEventGenerator) {
 
 func (s *Server) sendCachedLambdaMetrics(sse *datastar.ServerSentEventGenerator) {
 	s.renderLambdaReport(sse, s.lambdaService.CachedReport())
+}
+
+func (s *Server) sendCachedStateMachines(sse *datastar.ServerSentEventGenerator) {
+	sms, ok := s.stateMachinesBroadcaster.Current()
+	if !ok || len(sms) == 0 {
+		return
+	}
+	s.renderStateMachineOptions(sse, sms, nil)
+}
+
+func (s *Server) renderStateMachineOptions(sse *datastar.ServerSentEventGenerator, sms []domain_statemachine.StateMachine, _ error) {
+	type smItem struct {
+		Env     string `json:"env"`
+		BaseEnv string `json:"baseEnv"`
+		Name    string `json:"name"`
+		Arn     string `json:"arn"`
+	}
+	items := make([]smItem, 0, len(sms))
+	for _, sm := range sms {
+		items = append(items, smItem{
+			Env:     sm.Env,
+			BaseEnv: sm.BaseEnv,
+			Name:    sm.Name,
+			Arn:     sm.Arn,
+		})
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		slog.Error("json marshal failed", "context", "state-machine-options", "error", err)
+		return
+	}
+	sse.PatchSignals([]byte(fmt.Sprintf(`{"smList": %s}`, b)))
 }
