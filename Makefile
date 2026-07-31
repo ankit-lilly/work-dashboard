@@ -1,6 +1,6 @@
-# CAMP Job Viewer Makefile
+# Radar Dashboard Makefile
 
-BINARY_NAME=camp
+BINARY_NAME=radar
 VERSION=0.1.0
 BUILD_DIR=bin
 

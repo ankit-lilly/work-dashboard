@@ -81,8 +81,13 @@
                 <div id="active-jobs-list" class="overflow-x-auto">
                     {{if .ActiveJobsError}}
                     <div class="p-4 text-sm text-error">Failed to load: {{.ActiveJobsError}}</div>
-                    {{else}}
+                    {{else if .ActiveJobs}}
                     {{template "active-jobs" (dict "Jobs" .ActiveJobs "Joke" .ActiveJobsJoke)}}
+                    {{else}}
+                    <div class="p-4 flex items-center gap-3 text-sm text-base-content/60">
+                        <span class="loading loading-spinner loading-sm"></span>
+                        Loading active executions...
+                    </div>
                     {{end}}
                 </div>
             </div>
@@ -104,8 +109,13 @@
                 <div id="recent-completed-list" class="overflow-x-auto">
                     {{if .RecentCompletedError}}
                     <div class="p-4 text-sm text-error">Failed to load: {{.RecentCompletedError}}</div>
-                    {{else}}
+                    {{else if .RecentCompleted}}
                     {{template "recent-completed" (dict "Jobs" .RecentCompleted)}}
+                    {{else}}
+                    <div class="p-4 flex items-center gap-3 text-sm text-base-content/60">
+                        <span class="loading loading-spinner loading-sm"></span>
+                        Loading recently completed...
+                    </div>
                     {{end}}
                 </div>
             </div>
@@ -142,8 +152,13 @@
                 <div id="recent-failures-list" class="max-h-[40vh] overflow-y-auto">
                     {{if .RecentFailuresError}}
                     <div class="p-4 text-sm text-error">Failed to load: {{.RecentFailuresError}}</div>
-                    {{else}}
+                    {{else if .RecentFailures}}
                     {{template "recent-failures" (dict "Failures" .RecentFailures)}}
+                    {{else}}
+                    <div class="p-4 flex items-center gap-3 text-sm text-base-content/60">
+                        <span class="loading loading-spinner loading-sm"></span>
+                        Loading recent failures...
+                    </div>
                     {{end}}
                 </div>
             </div>
@@ -374,22 +389,29 @@
                             class="select select-sm select-bordered"
                             data-bind="recordSm"
                             data-effect="
-                                for (const opt of el.options) {
-                                    if (!opt.dataset.baseEnv) continue;
-                                    opt.style.display = ($recordEnv === 'all' || $recordEnv === opt.dataset.baseEnv) ? '' : 'none';
-                                }
-                                if (el.selectedOptions[0]?.style.display === 'none') {
+                                const list = $smList || [];
+                                const env = $recordEnv;
+                                const filtered = list.filter(sm => sm.name.includes('RulesProcessor') && (env === 'all' || sm.baseEnv === env));
+                                const placeholder = document.createElement('option');
+                                placeholder.value = '';
+                                placeholder.textContent = 'All RulesProcessor';
+                                const opts = [placeholder, ...filtered.map(sm => {
+                                    const o = document.createElement('option');
+                                    o.value = sm.arn;
+                                    o.dataset.env = sm.env;
+                                    o.dataset.baseEnv = sm.baseEnv;
+                                    o.textContent = sm.name + ' (' + sm.env + ')';
+                                    return o;
+                                })];
+                                el.replaceChildren(...opts);
+                                const prev = $recordSm;
+                                if (prev && filtered.find(sm => sm.arn === prev)) {
+                                    el.value = prev;
+                                } else {
                                     el.value = '';
+                                    $recordSm = '';
                                 }
                             ">
-                            <option value="">All RulesProcessor</option>
-                            {{range .StateMachines}}{{if contains .Name "RulesProcessor"}}
-                            <option value="{{.Arn}}"
-                                    data-env="{{.Env}}"
-                                    data-base-env="{{.BaseEnv}}">
-                                {{.Name}} ({{.Env}})
-                            </option>
-                            {{end}}{{end}}
                         </select>
                         <input id="start_date" name="start_date" type="date"
                             class="input input-sm input-bordered"

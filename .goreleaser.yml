@@ -6,7 +6,7 @@ before:
 builds:
   - id: work-dashboard
     main: .
-    binary: work-dashboard
+    binary: radar
     env:
       - CGO_ENABLED=0
     ldflags:

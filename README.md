@@ -7,16 +7,60 @@ different aws accounts at the same time.
 I run this on my local machine and use my aws sso profiles to monitor jobs across different
 environments from a single UI.
 
-Does this even work bro?
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ankit-lilly/work-dashboard/main/scripts/install.sh | bash
+```
+
+Options:
+
+```bash
+# Install a specific version
+VERSION=v0.2.0 curl -fsSL ... | bash
+
+# Install to a custom directory
+INSTALL_DIR=~/.local/bin curl -fsSL ... | bash
+```
+
+## Setup
+
+After installing, run the interactive setup wizard to configure your AWS SSO profiles:
+
+```bash
+radar setup
+```
+
+This reads your `~/.aws/config`, lets you pick which SSO profiles to monitor, assign
+environment tiers (dev/qa/prod), and generates the `.env` file automatically.
+
+## Usage
+
+```bash
+radar server
+```
+
+Open http://localhost:8080 in your browser. The dashboard loads instantly and fills in
+data via SSE as it arrives from AWS.
+
+## Development
+
+```bash
+# Run locally (formats + tidies first)
+make run
+
+# Build optimized binary
+make build
+
+# Build + watch CSS
+make css-watch
+```
 
 
 
 ## How does it work
 
 It uses Go on the backend and Datastar for updating the UI via SSE.
-
-You need aws sso profiles for it work.  You can take a look at .env.example to see what
-environment variables are expected.
 
 ```
 Browser
