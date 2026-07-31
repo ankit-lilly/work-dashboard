@@ -208,18 +208,20 @@ type InvocationData struct {
 	MemorySize int32 // MB (allocated)
 }
 
-// GetLast20Invocations queries CloudWatch Logs Insights for the last 20 Lambda invocations
+// GetLast20Invocations queries CloudWatch Logs Insights for recent Lambda invocations
 func (c *Client) GetLast20Invocations(ctx context.Context, functionName string) ([]InvocationData, error) {
 	logGroupName := fmt.Sprintf("/aws/lambda/%s", functionName)
 
-	// CloudWatch Logs Insights query for last 20 REPORT lines
+	// CloudWatch Logs Insights query for last 100 REPORT lines over 7 days.
+	// This gives a meaningful sample across multiple Step Function executions
+	// rather than just the most recent one.
 	query := `fields @timestamp, @duration, @maxMemoryUsed, @memorySize
 | filter @type = "REPORT"
 | sort @timestamp desc
-| limit 20`
+| limit 100`
 
-	// Query last 24 hours
-	startTime := aws.Int64(time.Now().Add(-24 * time.Hour).Unix())
+	// Query last 7 days
+	startTime := aws.Int64(time.Now().Add(-7 * 24 * time.Hour).Unix())
 	endTime := aws.Int64(time.Now().Unix())
 
 	// Start query

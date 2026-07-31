@@ -13,7 +13,7 @@
         </div>
         <div class="text-sm mt-1">
             ⚠️ <strong>{{printf "%.0f" .TimeoutPercent}}%</strong> of timeout limit
-            <span class="opacity-75 tooltip tooltip-bottom" data-tip="Based on recent invocations from Step Function executions (active + last 24h failures + last 1h completed)">({{.FormatAvgDuration}} avg / {{.FormatTimeout}} timeout)</span>
+            <span class="opacity-75 tooltip tooltip-bottom" data-tip="Based on up to 100 invocations from the last 7 days">({{.FormatAvgDuration}} avg / {{.FormatTimeout}} timeout)</span>
         </div>
         {{if ge .MemoryPercent 90.0}}
         <div class="text-sm mt-1">
@@ -121,7 +121,7 @@
                         <span class="mx-2">→</span>
                         <span class="opacity-75">To:</span> {{formatTimeLocal .LastInvoked}}
                     </div>
-                    <div class="mt-1 opacity-75">Based on {{.InvocationCount}} invocation{{if ne .InvocationCount 1}}s{{end}} from active + failed (24h) + completed (1h) executions</div>
+                    <div class="mt-1 opacity-75">Based on {{.InvocationCount}} invocation{{if ne .InvocationCount 1}}s{{end}} from the last 7 days</div>
                 </div>
             </div>
             {{end}}
@@ -139,7 +139,7 @@
                     </div>
                     <div class="stat-desc text-xs">last invoked</div>
                 </div>
-                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average duration from recent invocations (active + last 24h failures + last 1h completed, max 100 invocations)">
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average duration from up to 100 invocations over the last 7 days">
                     <div class="stat-title text-xs">Avg Duration</div>
                     <div class="stat-value text-lg {{if ge .TimeoutPercent 90.0}}text-error{{else if ge .TimeoutPercent 80.0}}text-warning{{else}}text-success{{end}}">
                         {{.FormatAvgDuration}}
@@ -168,7 +168,7 @@
                     <div class="stat-desc text-xs">last invoked</div>
                 </div>
                 {{end}}
-                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average memory used from recent invocations (active + last 24h failures + last 1h completed, max 50 invocations)">
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Average memory used from up to 100 invocations over the last 7 days">
                     <div class="stat-title text-xs">Avg Memory</div>
                     <div class="stat-value text-lg {{if ge .MemoryPercent 90.0}}text-error{{else if ge .MemoryPercent 80.0}}text-warning{{else}}text-success{{end}}">
                         {{.MemoryUsed}}MB
@@ -176,7 +176,7 @@
                     <div class="stat-desc text-xs">{{printf "%.0f" .MemoryPercent}}% used</div>
                 </div>
                 {{if gt .MemoryMax 0}}
-                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Maximum memory used across all recent invocations">
+                <div class="stat bg-base-200/50 rounded-lg p-3 tooltip" data-tip="Maximum memory used across invocations in the last 7 days">
                     <div class="stat-title text-xs">Peak Memory</div>
                     <div class="stat-value text-lg">{{.MemoryMax}}MB</div>
                     <div class="stat-desc text-xs">peak observed</div>
