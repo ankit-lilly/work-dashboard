@@ -21,13 +21,14 @@ func SetStaticFS(f fs.FS)   { staticFS = f }
 func SetSchemaSQL(s string) { schemaSQL = s }
 
 var rootCmd = &cobra.Command{
-	Use:           "work-dashboard",
-	Short:         "CAMP Job Viewer and MCP Investigator.",
+	Use:           "radar",
+	Short:         "Radar — AWS jobs monitoring dashboard.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
 
 func Execute() {
+	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -35,7 +36,6 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Version = version
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 
 	rootCmd.PersistentFlags().StringVar(

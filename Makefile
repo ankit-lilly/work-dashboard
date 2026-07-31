@@ -1,8 +1,9 @@
 # Radar Dashboard Makefile
 
 BINARY_NAME=radar
-VERSION=0.1.0
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_DIR=bin
+LDFLAGS=-s -w -X main.version=$(VERSION)
 
 .PHONY: all build clean run run-mcp fmt tidy help css css-watch
 
@@ -21,18 +22,18 @@ help:
 
 build:
 	@tailwindcss -i static/src/tailwind.css -o static/css/app.css --minify
-	@echo "Building optimized binary..."
+	@echo "Building optimized binary ($(VERSION))..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags="-s -w" .
+	CGO_ENABLED=0 go build -trimpath -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags="$(LDFLAGS)" .
 	@echo "Binary built at $(BUILD_DIR)/$(BINARY_NAME)"
 
 run: fmt tidy
-	@echo "Starting CAMP Job Viewer..."
-	go run . server
+	@echo "Starting Radar Dashboard..."
+	go run -ldflags="-X main.version=$(VERSION)" . server
 
 run-mcp: fmt tidy
-	@echo "Starting CAMP Investigator MCP..."
-	go run . mcp
+	@echo "Starting Radar MCP..."
+	go run -ldflags="-X main.version=$(VERSION)" . mcp
 
 fmt:
 	@echo "Formatting code..."
