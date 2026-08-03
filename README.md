@@ -100,8 +100,3 @@ Go server (per-request handlers, call app services directly)
 DOM updated in-place
 ```
 
-### Architecture overview
-
-See [docs/architecture-flow.md](docs/architecture-flow.md) for the full architecture diagram,
-request flows, and responsibility boundaries.
-
