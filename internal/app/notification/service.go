@@ -143,10 +143,3 @@ func formatExecutionList(execs []domain_execution.Summary, includeError bool) st
 	}
 	return strings.Join(lines, "\n")
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

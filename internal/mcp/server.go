@@ -54,7 +54,7 @@ func BuildPool() *db.Pool {
 	}
 
 	envs := make(map[string]db.EnvInfo)
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		seg := strings.Split(strings.TrimSpace(part), ":")
 		if len(seg) < 2 {
 			continue

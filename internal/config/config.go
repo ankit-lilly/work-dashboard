@@ -80,7 +80,7 @@ func LoadConfig() (*Config, error) {
 	applyLimitsEnv(config)
 
 	if raw := strings.TrimSpace(os.Getenv("SM_NAME_PREFIXES")); raw != "" {
-		for _, p := range strings.Split(raw, ",") {
+		for p := range strings.SplitSeq(raw, ",") {
 			if p = strings.TrimSpace(p); p != "" {
 				config.StateMachineNamePrefixes = append(config.StateMachineNamePrefixes, p)
 			}

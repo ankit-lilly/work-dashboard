@@ -56,8 +56,8 @@ func BaseEnvFromKey(envKey string) string {
 	if envKey == "" {
 		return ""
 	}
-	if idx := strings.Index(envKey, ":"); idx != -1 {
-		return envKey[:idx]
+	if before, _, ok := strings.Cut(envKey, ":"); ok {
+		return before
 	}
 	return envKey
 }

@@ -547,7 +547,7 @@
 {{define "states-viewer-link"}}
 <button type="button"
         class="link link-primary"
-        data-on:click="$statesEnv = '{{.Env}}'; $statesArn = '{{.ExecutionArn}}'; $statesReq = $statesReq + 1; $states_modal_open = true">
+        data-on:click="$statesReq = $statesReq + 1; $states_modal_open = true; @get('/api/execution-states?env={{.Env}}&arn={{.ExecutionArn}}&target_id=states-modal-v-' + $statesReq, {openWhenHidden: true})">
     View States
 </button>
 {{end}}

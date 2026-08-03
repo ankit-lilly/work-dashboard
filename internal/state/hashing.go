@@ -63,8 +63,8 @@ func hashRDSMetrics(metrics []domain_rds.RDSMetric) string {
 	for _, m := range metrics {
 		h.Write([]byte(m.Env))
 		h.Write([]byte(m.DBInstanceId))
-		h.Write([]byte(fmt.Sprintf("%.4f|%.4f|%.4f", m.CPUCurrent, m.CPUAverage, m.CPUMax)))
-		h.Write([]byte(fmt.Sprintf("|q%d|dp%d|", len(m.TopQueries), len(m.CPUDataPoints))))
+		h.Write(fmt.Appendf(nil, "%.4f|%.4f|%.4f", m.CPUCurrent, m.CPUAverage, m.CPUMax))
+		h.Write(fmt.Appendf(nil, "|q%d|dp%d|", len(m.TopQueries), len(m.CPUDataPoints)))
 		h.Write([]byte(m.Error))
 		h.Write([]byte("|"))
 	}
@@ -77,7 +77,7 @@ func hashLambdaReport(report *app_lambda.Report) string {
 		return ""
 	}
 	h := sha1.New()
-	h.Write([]byte(fmt.Sprintf("w%d|c%d|", report.WarningCount, len(report.Metrics))))
+	h.Write(fmt.Appendf(nil, "w%d|c%d|", report.WarningCount, len(report.Metrics)))
 	h.Write([]byte(report.LastUpdated.UTC().Format(time.RFC3339Nano)))
 	return hex.EncodeToString(h.Sum(nil))
 }

@@ -150,8 +150,8 @@ func parseJeffDeanFacts(md string) ([]string, error) {
 	facts := make([]string, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "- ") {
-			fact := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if after, ok := strings.CutPrefix(line, "- "); ok {
+			fact := strings.TrimSpace(after)
 			if fact != "" {
 				facts = append(facts, fact)
 			}

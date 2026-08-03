@@ -238,7 +238,7 @@ func (c *Client) GetLast20Invocations(ctx context.Context, functionName string) 
 	// Poll for results (with timeout)
 	queryId := startResp.QueryId
 	maxAttempts := 30 // 15 seconds max (30 * 500ms)
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for range maxAttempts {
 		time.Sleep(500 * time.Millisecond)
 
 		results, err := c.Logs.GetQueryResults(ctx, &cloudwatchlogs.GetQueryResultsInput{

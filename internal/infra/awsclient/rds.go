@@ -422,16 +422,10 @@ func estimateMaxConnections(instanceClass, engine string) int {
 	var maxConn int
 	if isMySQL {
 		// MySQL/MariaDB formula
-		maxConn = int(memoryBytes / 12582880)
-		if maxConn > 16000 {
-			maxConn = 16000
-		}
+		maxConn = min(int(memoryBytes/12582880), 16000)
 	} else {
 		// PostgreSQL formula (default)
-		maxConn = int(memoryBytes / 9531392)
-		if maxConn > 5000 {
-			maxConn = 5000
-		}
+		maxConn = min(int(memoryBytes/9531392), 5000)
 	}
 
 	return maxConn

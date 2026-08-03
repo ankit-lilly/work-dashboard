@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	domain_execution "github.com/EliLillyCo/work-dashboard/internal/domain/execution"
 	"github.com/EliLillyCo/work-dashboard/internal/server/render"
 	"github.com/starfederation/datastar-go/datastar"
 )
@@ -36,10 +37,7 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		items := render.PresentStateMachineExecutions(details)
 		total := len(items)
 		hasMore := total >= count && count < 100
-		nextCount := count + 10
-		if nextCount > 100 {
-			nextCount = 100
-		}
+		nextCount := min(count+10, 100)
 
 		if offset < 0 {
 			offset = 0
@@ -97,10 +95,7 @@ func (s *Server) fetchAndRenderExecutions(sse *datastar.ServerSentEventGenerator
 	items := render.PresentStateMachineExecutions(details)
 	total := len(items)
 	hasMore := total >= count && count < 100
-	nextCount := count + 10
-	if nextCount > 100 {
-		nextCount = 100
-	}
+	nextCount := min(count+10, 100)
 
 	html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions", map[string]any{
 		"Env":        env,
@@ -129,12 +124,14 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Fetch and render immediately
-	s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
+	status := s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
 
-	// Poll every 5s for live updates.
-	// When the user opens a different execution, $statesReq increments and the
-	// target_id changes. This connection keeps writing to the old target_id which
-	// no longer exists in the DOM — Datastar silently ignores it.
+	// Don't poll if the execution is already in a terminal state.
+	if isTerminalStatus(status) {
+		return
+	}
+
+	// Poll every 5s for live updates while execution is still running.
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -142,16 +139,19 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
+			status = s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
+			if isTerminalStatus(status) {
+				return
+			}
 		}
 	}
 }
 
-func (s *Server) fetchAndRenderStates(sse *datastar.ServerSentEventGenerator, ctx context.Context, env, arn, targetID string) {
+func (s *Server) fetchAndRenderStates(sse *datastar.ServerSentEventGenerator, ctx context.Context, env, arn, targetID string) domain_execution.Status {
 	fetchCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	stateMachine, states, err := s.execService.GetExecutionStates(fetchCtx, env, arn)
+	stateMachine, status, states, err := s.execService.GetExecutionStates(fetchCtx, env, arn)
 	payload := render.ExecutionStatesPayload{
 		Env:          env,
 		ExecutionArn: arn,
@@ -166,4 +166,13 @@ func (s *Server) fetchAndRenderStates(sse *datastar.ServerSentEventGenerator, ct
 	if execErr == nil {
 		sse.PatchElements(html, datastar.WithSelector("#"+targetID), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
 	}
+	return status
+}
+
+func isTerminalStatus(status domain_execution.Status) bool {
+	switch status {
+	case domain_execution.StatusSucceeded, domain_execution.StatusFailed, domain_execution.StatusTimedOut, domain_execution.StatusAborted:
+		return true
+	}
+	return false
 }

@@ -150,81 +150,69 @@ func (o *Orchestrator) tick(forceAll bool) {
 	results := make(chan fetchResult, len(due))
 
 	if due[SectionActive] && o.cfg.FetchActive != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			data, err := o.cfg.FetchActive()
 			if err != nil {
 				slog.Warn("orchestrator: fetch active failed", "err", err)
 				return
 			}
 			results <- fetchResult{SectionActive, data}
-		}()
+		})
 	}
 
 	if due[SectionCompleted] && o.cfg.FetchCompleted != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			data, err := o.cfg.FetchCompleted()
 			if err != nil {
 				slog.Warn("orchestrator: fetch completed failed", "err", err)
 				return
 			}
 			results <- fetchResult{SectionCompleted, data}
-		}()
+		})
 	}
 
 	if due[SectionFailures] && o.cfg.FetchFailures != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			data, err := o.cfg.FetchFailures()
 			if err != nil {
 				slog.Warn("orchestrator: fetch failures failed", "err", err)
 				return
 			}
 			results <- fetchResult{SectionFailures, data}
-		}()
+		})
 	}
 
 	if due[SectionStateMachines] && o.cfg.FetchStateMachines != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			data, err := o.cfg.FetchStateMachines()
 			if err != nil {
 				slog.Warn("orchestrator: fetch state machines failed", "err", err)
 				return
 			}
 			results <- fetchResult{SectionStateMachines, data}
-		}()
+		})
 	}
 
 	if due[SectionRDS] && o.cfg.FetchRDS != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			data, err := o.cfg.FetchRDS()
 			if err != nil {
 				slog.Warn("orchestrator: fetch RDS failed", "err", err)
 				return
 			}
 			results <- fetchResult{SectionRDS, data}
-		}()
+		})
 	}
 
 	if due[SectionLambda] && o.cfg.FetchLambda != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			data, err := o.cfg.FetchLambda()
 			if err != nil {
 				slog.Warn("orchestrator: fetch lambda failed", "err", err)
 				return
 			}
 			results <- fetchResult{SectionLambda, data}
-		}()
+		})
 	}
 
 	// Wait for all fetches, then collect results.

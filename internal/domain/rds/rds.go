@@ -108,17 +108,11 @@ func EstimateMaxConnections(instanceClass, engine string) int {
 
 	memoryBytes := int64(memoryMB) * 1024 * 1024
 	if isMySQL {
-		maxConn := int(memoryBytes / 12582880)
-		if maxConn > 16000 {
-			maxConn = 16000
-		}
+		maxConn := min(int(memoryBytes/12582880), 16000)
 		return maxConn
 	}
 
-	maxConn := int(memoryBytes / 9531392)
-	if maxConn > 5000 {
-		maxConn = 5000
-	}
+	maxConn := min(int(memoryBytes/9531392), 5000)
 	return maxConn
 }
 

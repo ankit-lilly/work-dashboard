@@ -335,24 +335,24 @@ func (s *Service) ListStateMachineExecutions(ctx context.Context, env, arn strin
 	return details, nil
 }
 
-func (s *Service) GetExecutionStates(ctx context.Context, env, executionArn string) (string, []domain_execution.State, error) {
+func (s *Service) GetExecutionStates(ctx context.Context, env, executionArn string) (string, domain_execution.Status, []domain_execution.State, error) {
 	repo := s.repos[env]
 	if repo == nil {
-		return "", nil, fmt.Errorf("unknown env")
+		return "", "", nil, fmt.Errorf("unknown env")
 	}
 
 	detail, err := repo.DescribeExecution(ctx, executionArn)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	states, err := repo.GetStateHistory(ctx, executionArn)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	if detail == nil {
-		return "", states, nil
+		return "", "", states, nil
 	}
-	return detail.StateMachine, states, nil
+	return detail.StateMachine, detail.Summary.Status, states, nil
 }
 
 func (s *Service) ActiveCount() int {

@@ -38,7 +38,7 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 func (s *Server) renderSnapshot(sse *datastar.ServerSentEventGenerator, snap state.Snapshot) {
 	// Always push credential error state on every update so clients stay in sync.
 	if snap.CredentialError {
-		sse.PatchSignals([]byte(fmt.Sprintf(`{"credential_error": true, "credential_error_msg": %q}`, snap.CredentialErrorMsg)))
+		sse.PatchSignals(fmt.Appendf(nil, `{"credential_error": true, "credential_error_msg": %q}`, snap.CredentialErrorMsg))
 	} else {
 		sse.PatchSignals([]byte(`{"credential_error": false, "credential_error_msg": ""}`))
 	}
@@ -62,7 +62,7 @@ func (s *Server) renderSnapshot(sse *datastar.ServerSentEventGenerator, snap sta
 }
 
 func (s *Server) renderActiveSection(sse *datastar.ServerSentEventGenerator, snap state.Snapshot) {
-	sse.PatchSignals([]byte(fmt.Sprintf(`{"active_jobs_count": %d}`, snap.ActiveCount)))
+	sse.PatchSignals(fmt.Appendf(nil, `{"active_jobs_count": %d}`, snap.ActiveCount))
 
 	activeViews := render.PresentExecutions(snap.Active)
 	joke := ""
@@ -81,7 +81,7 @@ func (s *Server) renderActiveSection(sse *datastar.ServerSentEventGenerator, sna
 }
 
 func (s *Server) renderCompletedSection(sse *datastar.ServerSentEventGenerator, snap state.Snapshot) {
-	sse.PatchSignals([]byte(fmt.Sprintf(`{"recent_completed_count": %d}`, len(snap.Completed))))
+	sse.PatchSignals(fmt.Appendf(nil, `{"recent_completed_count": %d}`, len(snap.Completed)))
 	html, err := s.renderer.ExecuteTemplate("index", "recent-completed", map[string]any{
 		"Jobs": render.PresentExecutions(snap.Completed),
 	})
@@ -95,7 +95,7 @@ func (s *Server) renderCompletedSection(sse *datastar.ServerSentEventGenerator, 
 }
 
 func (s *Server) renderFailuresSection(sse *datastar.ServerSentEventGenerator, snap state.Snapshot) {
-	sse.PatchSignals([]byte(fmt.Sprintf(`{"recent_failures_count": %d}`, len(snap.Failures))))
+	sse.PatchSignals(fmt.Appendf(nil, `{"recent_failures_count": %d}`, len(snap.Failures)))
 	html, err := s.renderer.ExecuteTemplate("index", "recent-failures", map[string]any{
 		"Failures": render.PresentExecutions(snap.Failures),
 	})
@@ -111,7 +111,7 @@ func (s *Server) renderRDSSection(sse *datastar.ServerSentEventGenerator, snap s
 	if s.cfg != nil {
 		metricHours = s.cfg.Limits.RDSMetricHours
 	}
-	sse.PatchSignals([]byte(fmt.Sprintf(`{"rds_loading": false, "rds_db_count": %d}`, len(snap.RDSMetrics))))
+	sse.PatchSignals(fmt.Appendf(nil, `{"rds_loading": false, "rds_db_count": %d}`, len(snap.RDSMetrics)))
 	html, err := s.renderer.ExecuteTemplate("index", "rds-metrics", map[string]any{
 		"Metrics":     snap.RDSMetrics,
 		"MetricHours": metricHours,
@@ -133,7 +133,7 @@ func (s *Server) renderLambdaReport(sse *datastar.ServerSentEventGenerator, repo
 	}
 
 	warnings, metrics := render.PresentLambdaReport(report)
-	sse.PatchSignals([]byte(fmt.Sprintf(`{"lambda_warnings": %d, "lambda_count": %d}`, len(warnings), len(metrics))))
+	sse.PatchSignals(fmt.Appendf(nil, `{"lambda_warnings": %d, "lambda_count": %d}`, len(warnings), len(metrics)))
 
 	warningsHTML, err := s.renderer.ExecuteTemplate("index", "lambda-warnings", map[string]any{"Warnings": warnings})
 	if err == nil {
@@ -167,5 +167,5 @@ func (s *Server) renderStateMachineOptions(sse *datastar.ServerSentEventGenerato
 		slog.Error("json marshal failed", "context", "state-machine-options", "error", err)
 		return
 	}
-	sse.PatchSignals([]byte(fmt.Sprintf(`{"smList": %s}`, b)))
+	sse.PatchSignals(fmt.Appendf(nil, `{"smList": %s}`, b))
 }

@@ -3,8 +3,6 @@
      data-signals="{
          json_modal_open: false,
          states_modal_open: false,
-         statesEnv: '',
-         statesArn: '',
          statesReq: 0,
          rds_info_modal_open: false,
          credential_error: false,
@@ -436,11 +434,9 @@
     </section>
 
 <!-- States modal trigger - stable element never morphed by SSE.
-     Each click gets a versioned target_id. Old SSE connections write to
-     a target that no longer exists in the DOM, so they're silently ignored. -->
-<div id="states-trigger" class="hidden"
-     data-effect="const r = $statesReq; if (r > 0 && $states_modal_open) { @get('/api/execution-states?env=' + encodeURIComponent($statesEnv) + '&arn=' + encodeURIComponent($statesArn) + '&target_id=states-modal-v-' + r, {openWhenHidden: true}) }">
-</div>
+     The @get is now called directly from the click handler, not from a reactive effect,
+     to prevent re-firing when the execution list is morphed by the SSE stream. -->
+<div id="states-trigger" class="hidden"></div>
 
 <!-- Modals -->
 <dialog class="modal" data-class="{'modal-open': $json_modal_open}">
