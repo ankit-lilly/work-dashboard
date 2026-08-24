@@ -33,6 +33,9 @@ type Server struct {
 	// Centralized state — single source of truth for dashboard data.
 	dashboardState *state.DashboardState
 	orchestrator   *state.Orchestrator
+
+	// Per-client sessions — tracks what each SSE connection is viewing.
+	sessions *sessionRegistry
 }
 
 func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Service, rdsService *app_rds.Service, searchService *app_search.Service, cfg *config.Config, staticFS fs.FS, jokeProvider JokeProvider, notify *app_notification.Service) (*Server, error) {
@@ -50,6 +53,7 @@ func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Ser
 		searchService: searchService,
 		jokeProvider:  jokeProvider,
 		staticFS:      staticFS,
+		sessions:      newSessionRegistry(),
 	}
 	s.initState(notify)
 	return s, nil
@@ -95,6 +99,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux.HandleFunc("/api/record-search", s.handleRecordSearch)
 	mux.HandleFunc("/api/record-search-cancel", s.handleRecordSearchCancel)
 	mux.HandleFunc("/api/state-machine-executions", s.handleStateMachineExecutions)
+	mux.HandleFunc("POST /api/sm/select", s.handleSelectSM)
 	mux.HandleFunc("/api/s3-preview-modal", s.handleS3PreviewModal)
 	mux.HandleFunc("/api/execution-states", s.handleExecutionStatesModal)
 	mux.HandleFunc("/view/json", s.handleS3ViewJSON)

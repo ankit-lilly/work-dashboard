@@ -4,10 +4,13 @@
          json_modal_open: false,
          states_modal_open: false,
          statesReq: 0,
+         __sid: '',
+         __sidPrev: '',
          rds_info_modal_open: false,
          credential_error: false,
          credential_error_msg: '',
          selectedSm: '',
+         selectedSmEnv: '',
          smEnv: 'all',
          smSearch: '',
          failuresEnv: 'all',
@@ -37,6 +40,11 @@
          smList: []
      }"
      data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
+
+    <!-- Re-sync SM selection on SSE reconnect (new session ID) -->
+    <div class="hidden"
+         data-effect="if ($__sid && $__sid !== $__sidPrev) { $__sidPrev = $__sid; if ($selectedSm) { fetch('/api/sm/select', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Session-ID': $__sid}, body: JSON.stringify({selectedSm: $selectedSm, selectedSmEnv: $selectedSmEnv})}) } }">
+    </div>
 
     <!-- AWS Credential Error Banner -->
     <div class="mb-4" data-show="$credential_error">
@@ -181,7 +189,7 @@
                         <select id="sm-env" aria-label="Filter environment"
                             class="select select-sm select-bordered join-item"
                             data-bind="smEnv"
-                            data-on:change="$selectedSm = ''">
+                            data-on:change="$selectedSm = ''; $selectedSmEnv = ''; @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selected(Sm|SmEnv)$/}})">>>
                             <option value="all">All Envs</option>
                             <option value="dev">Dev</option>
                             <option value="qa">QA</option>
@@ -190,7 +198,7 @@
                         <select id="sm-select" aria-label="Select state machine"
                             class="select select-sm select-bordered join-item min-w-[250px] max-w-[400px] truncate"
                             data-bind="selectedSm"
-                            data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; @get('/api/state-machine-executions?env=' + opt.dataset.env + '&arn=' + evt.target.value, {openWhenHidden: true}) }"
+                            data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; $selectedSmEnv = opt.dataset.env; } else { $selectedSmEnv = ''; } @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selected(Sm|SmEnv)$/}})"
                             data-indicator:sm_exec_loading
                             data-effect="
                                 const env = $smEnv;
@@ -216,9 +224,8 @@
                                 el.replaceChildren(...opts);
                                 if (prev && filtered.find(sm => sm.arn === prev)) {
                                     el.value = prev;
-                                } else {
+                                } else if (!prev) {
                                     el.value = '';
-                                    $selectedSm = '';
                                 }
                             ">
                         </select>
@@ -432,11 +439,6 @@
             </div>
         </details>
     </section>
-
-<!-- States modal trigger - stable element never morphed by SSE.
-     The @get is now called directly from the click handler, not from a reactive effect,
-     to prevent re-firing when the execution list is morphed by the SSE stream. -->
-<div id="states-trigger" class="hidden"></div>
 
 <!-- Modals -->
 <dialog class="modal" data-class="{'modal-open': $json_modal_open}">

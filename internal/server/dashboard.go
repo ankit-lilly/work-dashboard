@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	app_lambda "github.com/EliLillyCo/work-dashboard/internal/app/lambda"
 	domain_statemachine "github.com/EliLillyCo/work-dashboard/internal/domain/statemachine"
@@ -18,8 +19,23 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	sse := datastar.NewSSE(w, r)
 	ctx := r.Context()
 
+	// Register a per-connection session. The POST handler uses the session ID
+	// to signal this goroutine when the client changes its view.
+	sid := generateSessionID()
+	sess := s.sessions.register(sid)
+	defer s.sessions.unregister(sid)
+
+	// Push the session ID to the client so @post calls can include it.
+	sse.PatchSignals(fmt.Appendf(nil, `{"__sid": %q}`, sid))
+
+	// Subscribe to global dashboard state broadcasts.
 	ch := s.dashboardState.Subscribe()
 	defer s.dashboardState.Unsubscribe(ch)
+
+	// Background goroutine for SM execution fetching.
+	// Communicates results via execResultCh so the main loop never blocks on AWS.
+	execResultCh := make(chan execResult, 1)
+	go s.execFetchLoop(ctx, sess, execResultCh)
 
 	for {
 		select {
@@ -30,8 +46,50 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			s.renderSnapshot(sse, snap)
+		case result := <-execResultCh:
+			s.pushExecResult(sse, result)
 		}
 	}
+}
+
+// execFetchLoop runs in a background goroutine per SSE client.
+// It listens for selection changes (notify) and periodically refreshes.
+// Results are sent to the main loop via the channel for SSE writing.
+func (s *Server) execFetchLoop(ctx context.Context, sess *clientSession, resultCh chan execResult) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-sess.notify:
+			// Push loading indicator immediately.
+			sess.mu.Lock()
+			arn := sess.smArn
+			sess.mu.Unlock()
+			if arn != "" {
+				sendLatest(resultCh, execResult{loading: true})
+			}
+			// Fetch and push result.
+			result := s.fetchExecForSession(ctx, sess)
+			sendLatest(resultCh, result)
+		case <-ticker.C:
+			result := s.fetchExecForSession(ctx, sess)
+			if result.html != "" || result.empty {
+				sendLatest(resultCh, result)
+			}
+		}
+	}
+}
+
+// sendLatest sends the result using latest-only semantics on a capacity-1 channel.
+func sendLatest(ch chan execResult, r execResult) {
+	select {
+	case <-ch:
+	default:
+	}
+	ch <- r
 }
 
 // renderSnapshot sends the changed sections of a state snapshot to the client.

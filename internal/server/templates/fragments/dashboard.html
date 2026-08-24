@@ -277,7 +277,7 @@
         {{range .Items}}
         <button class="w-full text-left p-4 hover:bg-base-200/50 transition-colors"
             data-show="($smEnv == 'all' || $smEnv == '{{.Env}}' || $smEnv == '{{.BaseEnv}}') && el.innerText.toLowerCase().includes($smSearch.toLowerCase())"
-            data-on:click="$selectedSm = '{{.Arn}}'; @get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}', {openWhenHidden: true, requestCancellation: 'disabled'})"
+            data-on:click="$selectedSm = '{{.Arn}}'; $selectedSmEnv = '{{.Env}}'; @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selected(Sm|SmEnv)$/}})"
             data-indicator:sm_exec_loading
             data-class="{
                 'bg-primary/10': $selectedSm == '{{.Arn}}',
@@ -449,7 +449,7 @@
             <button type="button" class="btn btn-outline btn-xs"
                 data-indicator:sm_exec_loading
                 data-class="{'btn-disabled': $sm_exec_loading}"
-                data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}&append=1&offset={{.Count}}', {openWhenHidden: true})">>
+                data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}&append=1&offset={{.Count}}', {openWhenHidden: true, headers: {'X-Session-ID': $__sid}})">>
                 <span data-show="!$sm_exec_loading">Load more</span>
                 <span data-show="$sm_exec_loading" class="inline-flex items-center gap-1" style="display:none">
                     <span class="loading loading-spinner loading-xs"></span>
