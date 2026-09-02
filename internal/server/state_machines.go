@@ -2,10 +2,9 @@ package server
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -16,11 +15,9 @@ import (
 )
 
 func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Request) {
-	sse := datastar.NewSSE(w, r)
 	env := strings.TrimSpace(r.URL.Query().Get("env"))
 	arn := strings.TrimSpace(r.URL.Query().Get("arn"))
 	count := parseIntOrDefault(r.URL.Query().Get("count"), 10)
-	offset := parseIntOrDefault(r.URL.Query().Get("offset"), 0)
 	if count < 1 {
 		count = 10
 	}
@@ -32,52 +29,28 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// This endpoint only handles one-shot "Load more" appends.
-	// Validate the session still matches this request (guards against races).
-	if sid := r.Header.Get("X-Session-ID"); sid != "" {
-		if sess := s.sessions.get(sid); sess != nil {
-			sess.mu.Lock()
-			if sess.smArn != arn || sess.smEnv != env {
-				sess.mu.Unlock()
-				return // stale request — user already switched SM
-			}
-			sess.smCount = count
-			sess.execHash = "" // force re-render with new count
-			sess.mu.Unlock()
-		}
+	// Load-more is a command only. The persistent dashboard SSE connection is
+	// the sole writer for the execution subtree, which prevents an append
+	// response racing a full refresh or a newer selection.
+	sid := r.Header.Get("X-Session-ID")
+	if sid == "" {
+		http.Error(w, "missing X-Session-ID header", http.StatusBadRequest)
+		return
+	}
+	sess := s.sessions.get(sid)
+	if sess == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !sess.requestCount(env, arn, count) {
+		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	details, _ := s.execService.ListStateMachineExecutions(ctx, env, arn, count)
-	items := render.PresentStateMachineExecutions(details)
-	total := len(items)
-	hasMore := total >= count && count < 100
-	nextCount := min(count+10, 100)
-
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > len(items) {
-		offset = len(items)
-	}
-	newItems := items[offset:]
-	if len(newItems) > 0 {
-		html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions-rows", map[string]any{"Executions": newItems})
-		if err == nil {
-			sse.PatchElements(html, datastar.WithSelector("#state-machine-executions-rows"), datastar.WithMode(datastar.ElementPatchModeAppend), datastar.WithUseViewTransitions(false))
-		}
-	}
-	html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions-footer", map[string]any{
-		"Env":       env,
-		"Arn":       arn,
-		"Count":     count,
-		"CountNext": nextCount,
-		"Total":     total,
-		"HasMore":   hasMore,
-	})
-	if err == nil {
-		sse.PatchElements(html, datastar.WithSelector("#state-machine-executions-footer"), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
+	sse := datastar.NewSSE(w, r)
+	_ = sse.MarshalAndPatchSignals(map[string]any{"sm_exec_loading": true})
+	select {
+	case sess.notify <- struct{}{}:
+	default:
 	}
 }
 
@@ -160,33 +133,33 @@ func (s *Server) handleSelectSM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Datastar sends signals as JSON body: {"selectedSm": "...", "selectedSmEnv": "..."}
+	// The ARN signal is the command. Resolve its environment from backend state
+	// so the browser and server cannot disagree about the selected machine.
 	var signals struct {
 		Arn string `json:"selectedSm"`
-		Env string `json:"selectedSmEnv"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&signals); err != nil {
+	if err := datastar.ReadSignals(r, &signals); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	env := strings.TrimSpace(signals.Env)
 	arn := strings.TrimSpace(signals.Arn)
-
-	sess.mu.Lock()
-	changed := sess.smEnv != env || sess.smArn != arn
-	sess.smEnv = env
-	sess.smArn = arn
-	if changed {
-		sess.smCount = 10 // always reset page size on selection change
-	}
-	sess.execHash = "" // force re-render on next fetch
-	sess.mu.Unlock()
-
-	// SSE ack: push immediate loading feedback to the client.
+	env := ""
 	if arn != "" {
-		sse := datastar.NewSSE(w, r)
-		sse.PatchSignals([]byte(`{"sm_exec_loading": true}`))
+		var ok bool
+		env, ok = s.stateMachineEnv(arn)
+		if !ok {
+			arn = ""
+		}
 	}
+
+	changed := sess.selectStateMachine(env, arn)
+
+	// SSE acknowledgement keeps client signals aligned with authoritative state.
+	sse := datastar.NewSSE(w, r)
+	_ = sse.MarshalAndPatchSignals(map[string]any{
+		"selectedSm":      arn,
+		"sm_exec_loading": arn != "",
+	})
 
 	// Signal the SSE goroutine to fetch now.
 	if changed {
@@ -197,65 +170,72 @@ func (s *Server) handleSelectSM(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) stateMachineEnv(arn string) (string, bool) {
+	for _, sm := range s.dashboardState.CurrentSnapshot().StateMachines {
+		if sm.Arn == arn {
+			return sm.Env, true
+		}
+	}
+	return "", false
+}
+
 // execResult carries pre-fetched execution data from the background goroutine
 // to the main SSE loop for writing.
 type execResult struct {
+	view    sessionView
 	loading bool   // true = push loading indicator only
-	empty   bool   // true = no executions found
+	empty   bool   // true = no state machine selected
 	html    string // rendered HTML fragment
-	env     string // the env this result was fetched for
-	arn     string // the arn this result was fetched for
-	hash    string // content hash for this result
 }
 
 // fetchExecForSession fetches execution list data for the session's selected SM.
 // Called from the background exec goroutine — safe to block.
 func (s *Server) fetchExecForSession(ctx context.Context, sess *clientSession) execResult {
-	sess.mu.Lock()
-	env := sess.smEnv
-	arn := sess.smArn
-	count := sess.smCount
-	prevHash := sess.execHash
-	sess.mu.Unlock()
+	view := sess.view()
 
 	// Nothing selected.
-	if arn == "" {
-		if prevHash != "" {
-			sess.mu.Lock()
-			sess.execHash = ""
-			sess.mu.Unlock()
-			return execResult{empty: true, env: env, arn: arn}
+	if view.arn == "" {
+		const emptyHash = "empty-selection"
+		if view.prevHash == emptyHash {
+			return execResult{}
 		}
-		return execResult{}
+		if !sess.commitHash(view, emptyHash) {
+			return execResult{}
+		}
+		return execResult{view: view, empty: true}
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	if !sess.installCancel(view.generation, cancel) {
+		return execResult{}
+	}
+	defer sess.clearCancel(view.generation)
 
-	details, execErr := s.execService.ListStateMachineExecutions(fetchCtx, env, arn, count)
+	details, execErr := s.execService.ListStateMachineExecutions(fetchCtx, view.env, view.arn, view.count)
 	items := render.PresentStateMachineExecutions(details)
 	total := len(items)
-	hasMore := total >= count && count < 100
-	nextCount := min(count+10, 100)
+	hasMore := total >= view.count && view.count < 100
+	nextCount := min(view.count+10, 100)
 
 	// Content-hash for dedup.
 	newHash := hashExecList(items)
 	if newHash == "" {
 		newHash = "empty" // distinguish "no items" from "never fetched"
 	}
-	if newHash == prevHash {
+	if newHash == view.prevHash {
 		return execResult{} // nothing changed
 	}
 
-	sess.mu.Lock()
-	sess.execHash = newHash
-	sess.mu.Unlock()
+	if !sess.commitHash(view, newHash) {
+		return execResult{} // selection changed while AWS was responding
+	}
 
 	html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions", map[string]any{
-		"Env":        env,
-		"Arn":        arn,
+		"Env":        view.env,
+		"Arn":        view.arn,
 		"Executions": items,
-		"Count":      count,
+		"Count":      view.count,
 		"CountNext":  nextCount,
 		"Total":      total,
 		"HasMore":    hasMore,
@@ -264,12 +244,15 @@ func (s *Server) fetchExecForSession(ctx context.Context, sess *clientSession) e
 	if err != nil {
 		return execResult{}
 	}
-	return execResult{html: html, env: env, arn: arn, hash: newHash}
+	return execResult{view: view, html: html}
 }
 
 // pushExecResult writes a pre-fetched exec result to the SSE stream.
 // Called only from the main SSE loop — single-writer guarantee.
-func (s *Server) pushExecResult(sse *datastar.ServerSentEventGenerator, result execResult) {
+func (s *Server) pushExecResult(sse *datastar.ServerSentEventGenerator, sess *clientSession, result execResult) {
+	if !sess.isCurrent(result.view) {
+		return
+	}
 	if result.loading {
 		html, err := s.renderer.ExecuteTemplate("index", "state-machine-executions-loading", nil)
 		if err == nil {
@@ -297,16 +280,10 @@ func (s *Server) renderExecEmpty(sse *datastar.ServerSentEventGenerator) {
 
 // hashExecList computes a content hash for the rendered execution list (dedup).
 func hashExecList(items []render.StateMachineExecutionView) string {
-	if len(items) == 0 {
+	b, err := json.Marshal(items)
+	if err != nil {
 		return ""
 	}
-	h := sha1.New()
-	for _, item := range items {
-		h.Write([]byte(item.Arn))
-		h.Write([]byte(item.Status))
-		h.Write([]byte(item.StartTime))
-		h.Write([]byte(item.StopTime))
-		h.Write(fmt.Appendf(nil, "|%d|", len(item.MapRuns)))
-	}
-	return hex.EncodeToString(h.Sum(nil))
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

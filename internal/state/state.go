@@ -23,11 +23,8 @@ const (
 )
 
 // Snapshot is an immutable view of all dashboard state at a particular version.
-// Nil fields mean "unchanged since last snapshot" when sent as an update.
 type Snapshot struct {
-	Version  uint64
-	Changed  []Section
-	FullSync bool // true on first send to a new subscriber
+	Version uint64
 
 	Active        []domain_execution.Summary
 	Completed     []domain_execution.Summary
@@ -68,7 +65,7 @@ type DashboardState struct {
 
 	// Subscribers
 	subsMu sync.RWMutex
-	subs   map[chan Snapshot]struct{}
+	subs   map[chan struct{}]struct{}
 }
 
 // NewDashboardState creates the centralized state container.
@@ -78,32 +75,25 @@ func NewDashboardState() *DashboardState {
 		flashCompletedSeen: make(map[string]time.Time),
 		flashFailuresSeen:  make(map[string]time.Time),
 		hashes:             make(map[Section]string),
-		subs:               make(map[chan Snapshot]struct{}),
+		subs:               make(map[chan struct{}]struct{}),
 	}
 }
 
-// Subscribe returns a channel that receives state updates.
-// The channel has capacity 1 and uses "latest-only" semantics: if the subscriber
-// hasn't consumed the previous update, it's replaced with the newer one.
-func (ds *DashboardState) Subscribe() chan Snapshot {
-	ch := make(chan Snapshot, 1)
+// Subscribe returns a latest-only wake-up channel. Notifications do not carry
+// state; subscribers read CurrentSnapshot when awakened, so coalescing multiple
+// notifications can never discard part of an update.
+func (ds *DashboardState) Subscribe() chan struct{} {
+	ch := make(chan struct{}, 1)
+	ch <- struct{}{} // initial render
 	ds.subsMu.Lock()
 	ds.subs[ch] = struct{}{}
 	ds.subsMu.Unlock()
-
-	// Immediately send current full state so new subscribers don't start empty.
-	ds.mu.RLock()
-	snap := ds.fullSnapshotLocked()
-	ds.mu.RUnlock()
-
-	snap.FullSync = true
-	ch <- snap
 
 	return ch
 }
 
 // Unsubscribe removes a subscriber channel and closes it.
-func (ds *DashboardState) Unsubscribe(ch chan Snapshot) {
+func (ds *DashboardState) Unsubscribe(ch chan struct{}) {
 	ds.subsMu.Lock()
 	defer ds.subsMu.Unlock()
 	if _, ok := ds.subs[ch]; !ok {
@@ -120,35 +110,16 @@ func (ds *DashboardState) CurrentSnapshot() Snapshot {
 	return ds.fullSnapshotLocked()
 }
 
-// Version returns the current state version.
-func (ds *DashboardState) Version() uint64 {
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	return ds.version
-}
-
-// ActiveCount returns the number of active executions.
-func (ds *DashboardState) ActiveCount() int {
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	return ds.activeCount
-}
-
-// notify sends a snapshot to all subscribers using latest-only semantics.
-func (ds *DashboardState) notify(snap Snapshot) {
+// notify wakes all subscribers using latest-only semantics.
+func (ds *DashboardState) notify() {
 	ds.subsMu.RLock()
 	defer ds.subsMu.RUnlock()
 
 	for ch := range ds.subs {
-		// Drain any unconsumed update, then send the latest.
 		select {
-		case <-ch:
+		case ch <- struct{}{}:
 		default:
-		}
-		select {
-		case ch <- snap:
-		default:
-			// Should not happen with capacity 1 after drain, but guard anyway.
+			// A wake-up is already pending; it will read the latest snapshot.
 		}
 	}
 }
@@ -157,7 +128,6 @@ func (ds *DashboardState) notify(snap Snapshot) {
 func (ds *DashboardState) fullSnapshotLocked() Snapshot {
 	return Snapshot{
 		Version:            ds.version,
-		Changed:            []Section{SectionActive, SectionCompleted, SectionFailures, SectionRDS, SectionLambda, SectionStateMachines},
 		Active:             ds.active,
 		Completed:          ds.completed,
 		Failures:           ds.failures,

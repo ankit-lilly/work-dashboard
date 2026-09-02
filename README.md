@@ -76,27 +76,35 @@ State Orchestrator (single goroutine)
   |  Fetches all data sources on schedule (5s tick)
   |  Applies changes atomically to DashboardState
   |  Detects what changed via content hashing
-  |  Notifies subscriber (the SSE handler)
+  |  Sends a coalescing wake-up to subscribers
   v
 SSE Handler
-  |  Renders only changed sections
+  |  Reads one complete CurrentSnapshot()
+  |  Renders the complete state (Datastar morphs only DOM differences)
   |  PatchSignals + PatchElements → target IDs
   v
 DOM updated in-place (no page reload)
 ```
 
-### On-demand streams (separate from the main dashboard state)
+### Backend state ownership
+
+`DashboardState` is the typed global store for AWS data. The orchestrator is
+its only writer. Each browser connection also has a small `clientSession` for
+view-specific state such as the selected state machine and execution page size.
+Commands update the session; the persistent dashboard SSE handler remains the
+only writer for the state-machine execution DOM.
+
+### On-demand streams
 
 ```
 Browser (user interaction)
-  |  SSE GET /api/state-machine-executions (on click)
+  |  Command GET /api/state-machine-executions (increase page size)
   |  SSE GET /api/execution-states (modal)
   |  SSE GET /api/record-search (search)
   |  SSE GET /api/s3-preview-modal (modal)
   v
 Go server (per-request handlers, call app services directly)
-  |  PatchElements -> target IDs
+  |  PatchElements -> request-specific target IDs
   v
 DOM updated in-place
 ```
-

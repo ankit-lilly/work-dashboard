@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,13 +40,13 @@ func (s *Server) handleDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 		select {
 		case <-ctx.Done():
 			return
-		case snap, ok := <-ch:
+		case _, ok := <-ch:
 			if !ok {
 				return
 			}
-			s.renderSnapshot(sse, snap)
+			s.renderSnapshot(sse, sess, s.dashboardState.CurrentSnapshot())
 		case result := <-execResultCh:
-			s.pushExecResult(sse, result)
+			s.pushExecResult(sse, sess, result)
 		}
 	}
 }
@@ -65,15 +64,15 @@ func (s *Server) execFetchLoop(ctx context.Context, sess *clientSession, resultC
 			return
 		case <-sess.notify:
 			// Push loading indicator immediately.
-			sess.mu.Lock()
-			arn := sess.smArn
-			sess.mu.Unlock()
-			if arn != "" {
-				sendLatest(resultCh, execResult{loading: true})
+			view := sess.view()
+			if view.arn != "" {
+				sendLatest(resultCh, execResult{view: view, loading: true})
 			}
 			// Fetch and push result.
 			result := s.fetchExecForSession(ctx, sess)
-			sendLatest(resultCh, result)
+			if result.html != "" || result.empty {
+				sendLatest(resultCh, result)
+			}
 		case <-ticker.C:
 			result := s.fetchExecForSession(ctx, sess)
 			if result.html != "" || result.empty {
@@ -92,8 +91,11 @@ func sendLatest(ch chan execResult, r execResult) {
 	ch <- r
 }
 
-// renderSnapshot sends the changed sections of a state snapshot to the client.
-func (s *Server) renderSnapshot(sse *datastar.ServerSentEventGenerator, snap state.Snapshot) {
+// renderSnapshot sends a complete state snapshot to the client. Subscriber
+// notifications may be coalesced because each wake-up reads current state.
+func (s *Server) renderSnapshot(sse *datastar.ServerSentEventGenerator, sess *clientSession, snap state.Snapshot) {
+	_ = sse.MarshalAndPatchSignals(map[string]any{"dashboard_version": snap.Version})
+
 	// Always push credential error state on every update so clients stay in sync.
 	if snap.CredentialError {
 		sse.PatchSignals(fmt.Appendf(nil, `{"credential_error": true, "credential_error_msg": %q}`, snap.CredentialErrorMsg))
@@ -101,22 +103,12 @@ func (s *Server) renderSnapshot(sse *datastar.ServerSentEventGenerator, snap sta
 		sse.PatchSignals([]byte(`{"credential_error": false, "credential_error_msg": ""}`))
 	}
 
-	for _, section := range snap.Changed {
-		switch section {
-		case state.SectionActive:
-			s.renderActiveSection(sse, snap)
-		case state.SectionCompleted:
-			s.renderCompletedSection(sse, snap)
-		case state.SectionFailures:
-			s.renderFailuresSection(sse, snap)
-		case state.SectionRDS:
-			s.renderRDSSection(sse, snap)
-		case state.SectionLambda:
-			s.renderLambdaSection(sse, snap)
-		case state.SectionStateMachines:
-			s.renderStateMachineOptions(sse, snap.StateMachines, nil)
-		}
-	}
+	s.renderActiveSection(sse, snap)
+	s.renderCompletedSection(sse, snap)
+	s.renderFailuresSection(sse, snap)
+	s.renderRDSSection(sse, snap)
+	s.renderLambdaSection(sse, snap)
+	s.renderStateMachineOptions(sse, snap.StateMachines, sess)
 }
 
 func (s *Server) renderActiveSection(sse *datastar.ServerSentEventGenerator, snap state.Snapshot) {
@@ -124,8 +116,8 @@ func (s *Server) renderActiveSection(sse *datastar.ServerSentEventGenerator, sna
 
 	activeViews := render.PresentExecutions(snap.Active)
 	joke := ""
-	if len(activeViews) == 0 && s.jokeProvider != nil {
-		joke = s.jokeProvider.Random(context.TODO())
+	if len(activeViews) == 0 {
+		joke = s.getIdleJoke()
 	}
 	html, err := s.renderer.ExecuteTemplate("index", "active-jobs", map[string]any{
 		"Jobs": activeViews,
@@ -136,6 +128,16 @@ func (s *Server) renderActiveSection(sse *datastar.ServerSentEventGenerator, sna
 		return
 	}
 	sse.PatchElements(html, datastar.WithSelector("#active-jobs-list"), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
+}
+
+func (s *Server) getIdleJoke() string {
+	if s.jokeProvider == nil {
+		return ""
+	}
+	s.idleJokeOnce.Do(func() {
+		s.idleJoke = s.jokeProvider.Random(context.TODO())
+	})
+	return s.idleJoke
 }
 
 func (s *Server) renderCompletedSection(sse *datastar.ServerSentEventGenerator, snap state.Snapshot) {
@@ -204,26 +206,25 @@ func (s *Server) renderLambdaReport(sse *datastar.ServerSentEventGenerator, repo
 	}
 }
 
-func (s *Server) renderStateMachineOptions(sse *datastar.ServerSentEventGenerator, sms []domain_statemachine.StateMachine, _ error) {
-	type smItem struct {
-		Env     string `json:"env"`
-		BaseEnv string `json:"baseEnv"`
-		Name    string `json:"name"`
-		Arn     string `json:"arn"`
+func (s *Server) renderStateMachineOptions(sse *datastar.ServerSentEventGenerator, sms []domain_statemachine.StateMachine, sess *clientSession) {
+	selected := ""
+	if sess != nil {
+		selected = sess.view().arn
 	}
-	items := make([]smItem, 0, len(sms))
-	for _, sm := range sms {
-		items = append(items, smItem{
-			Env:     sm.Env,
-			BaseEnv: sm.BaseEnv,
-			Name:    sm.Name,
-			Arn:     sm.Arn,
-		})
-	}
-	b, err := json.Marshal(items)
+	html, err := s.renderer.ExecuteTemplate("index", "state-machine-options", map[string]any{
+		"StateMachines": sms,
+		"Selected":      selected,
+	})
 	if err != nil {
-		slog.Error("json marshal failed", "context", "state-machine-options", "error", err)
+		slog.Error("template render failed", "template", "state-machine-options", "error", err)
 		return
 	}
-	sse.PatchSignals(fmt.Appendf(nil, `{"smList": %s}`, b))
+	sse.PatchElements(html, datastar.WithSelector("#sm-select"), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
+
+	recordHTML, err := s.renderer.ExecuteTemplate("index", "record-state-machine-options", map[string]any{"StateMachines": sms})
+	if err != nil {
+		slog.Error("template render failed", "template", "record-state-machine-options", "error", err)
+		return
+	}
+	sse.PatchElements(recordHTML, datastar.WithSelector("#state_machine"), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
 }

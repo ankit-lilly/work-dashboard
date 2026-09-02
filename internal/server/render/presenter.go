@@ -368,8 +368,11 @@ func dashboardDuration(start, stop time.Time) string {
 }
 
 func stateMachineDuration(start, stop time.Time) string {
-	if start.IsZero() || stop.IsZero() {
+	if start.IsZero() {
 		return ""
+	}
+	if stop.IsZero() {
+		return time.Since(start).Round(time.Second).String()
 	}
 	d := stop.Sub(start)
 	if d < 0 {

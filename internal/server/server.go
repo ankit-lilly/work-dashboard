@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 
 	app_execution "github.com/EliLillyCo/work-dashboard/internal/app/execution"
 	app_lambda "github.com/EliLillyCo/work-dashboard/internal/app/lambda"
@@ -28,6 +29,8 @@ type Server struct {
 	rdsService    *app_rds.Service
 	searchService *app_search.Service
 	jokeProvider  JokeProvider
+	idleJokeOnce  sync.Once
+	idleJoke      string
 	staticFS      fs.FS
 
 	// Centralized state — single source of truth for dashboard data.

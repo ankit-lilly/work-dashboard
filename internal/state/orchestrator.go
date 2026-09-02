@@ -84,7 +84,7 @@ func NewOrchestrator(state *DashboardState, cfg OrchestratorConfig) *Orchestrato
 		schedules: map[Section]*schedule{
 			SectionActive:        {interval: polling.ActiveInterval},
 			SectionCompleted:     {interval: polling.ActiveInterval}, // same as active
-			SectionFailures:      {interval: polling.ActiveInterval}, // same as active
+			SectionFailures:      {interval: polling.FailuresInterval},
 			SectionRDS:           {interval: polling.RDSFastInterval},
 			SectionLambda:        {interval: 60 * time.Second},
 			SectionStateMachines: {interval: polling.StateMachinesInterval},
@@ -262,6 +262,11 @@ func (o *Orchestrator) applyUpdate(fetched map[Section]any, fetchDuration time.D
 			ds.activeCount = len(active)
 			ds.hashes[SectionActive] = newHash
 			changed = append(changed, SectionActive)
+		} else if len(active) > 0 {
+			// Running durations are rendered relative to the current time. Emit a
+			// fresh full snapshot on every active poll so they keep advancing
+			// without client-side timers.
+			changed = append(changed, SectionActive)
 		}
 		// Notify for new active executions
 		if o.cfg.Notify != nil {
@@ -359,25 +364,11 @@ func (o *Orchestrator) applyUpdate(fetched map[Section]any, fetchDuration time.D
 	// Bump version and notify.
 	ds.version++
 
-	snap := Snapshot{
-		Version:            ds.version,
-		Changed:            changed,
-		Active:             ds.active,
-		Completed:          ds.completed,
-		Failures:           ds.failures,
-		StateMachines:      ds.stateMachines,
-		RDSMetrics:         ds.rdsMetrics,
-		LambdaReport:       ds.lambdaReport,
-		CredentialError:    ds.credentialError,
-		CredentialErrorMsg: ds.credentialErrorMsg,
-		ActiveCount:        ds.activeCount,
-	}
-
 	slog.Info("state updated", "version", ds.version, "changed", changed, "fetchDuration", fetchDuration)
 
 	// Unlock before notifying to avoid holding the state lock during channel sends.
 	ds.mu.Unlock()
-	ds.notify(snap)
+	ds.notify()
 	ds.mu.Lock() // re-acquire for the deferred unlock
 }
 

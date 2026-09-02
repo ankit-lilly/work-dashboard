@@ -270,6 +270,8 @@ func (s *Service) ListStateMachineExecutions(ctx context.Context, env, arn strin
 		domain_execution.StatusRunning,
 		domain_execution.StatusFailed,
 		domain_execution.StatusSucceeded,
+		domain_execution.StatusTimedOut,
+		domain_execution.StatusAborted,
 	}
 
 	var refs []domain_execution.Ref

@@ -93,7 +93,9 @@ func (s *Service) FetchMetrics() (*Report, error) {
 		now := time.Now()
 		s.cacheMu.Lock()
 		if cached, ok := s.cache[key]; ok && now.Sub(cached.FetchedAt) < interval {
+			mu.Lock()
 			allMetrics = append(allMetrics, cached.Metrics)
+			mu.Unlock()
 			s.cacheMu.Unlock()
 			continue
 		}

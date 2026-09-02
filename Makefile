@@ -5,7 +5,7 @@ VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_DIR=bin
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: all build clean run run-mcp fmt tidy help css css-watch
+.PHONY: all build clean run run-mcp fmt tidy help css css-watch test
 
 all: fmt tidy build
 
@@ -38,6 +38,10 @@ run-mcp: fmt tidy
 fmt:
 	@echo "Formatting code..."
 	go fmt ./...
+
+test:
+	@echo "Running tests..."
+	go test ./...
 
 tidy:
 	@echo "Tidying modules..."

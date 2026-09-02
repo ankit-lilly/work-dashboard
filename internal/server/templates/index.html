@@ -10,7 +10,6 @@
          credential_error: false,
          credential_error_msg: '',
          selectedSm: '',
-         selectedSmEnv: '',
          smEnv: 'all',
          smSearch: '',
          failuresEnv: 'all',
@@ -20,7 +19,8 @@
          sm_exec_loading: false,
          s3_search_loading: false,
          s3_prefix_loading: false,
-         active_jobs_count: 0,
+	         active_jobs_count: 0,
+	         dashboard_version: 0,
          recent_failures_count: 0,
          recent_completed_count: 0,
          rdsEnv: 'all',
@@ -36,14 +36,13 @@
          lambda_warnings: 0,
          lambda_count: 0,
          lambdaEnv: 'all',
-         lambdaSearch: '',
-         smList: []
+	         lambdaSearch: ''
      }"
-     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">>
+     data-init="@get('/api/dashboard-updates', {openWhenHidden: true, requestCancellation: 'disabled'})">
 
-    <!-- Re-sync SM selection on SSE reconnect (new session ID) -->
-    <div class="hidden"
-         data-effect="if ($__sid && $__sid !== $__sidPrev) { $__sidPrev = $__sid; if ($selectedSm) { fetch('/api/sm/select', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Session-ID': $__sid}, body: JSON.stringify({selectedSm: $selectedSm, selectedSmEnv: $selectedSmEnv})}) } }">
+	<!-- Re-sync SM selection on SSE reconnect (new session ID) -->
+	<div class="hidden"
+	     data-effect="if ($__sid && $__sid !== $__sidPrev) { $__sidPrev = $__sid; if ($selectedSm) { @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selectedSm$/}}) } }">
     </div>
 
     <!-- AWS Credential Error Banner -->
@@ -137,7 +136,7 @@
                         <h2 class="text-lg font-semibold">Recent Failures</h2>
                         <span class="badge badge-sm badge-ghost">Last 24h</span>
                     </div>
-                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                    <div class="join join-horizontal" data-on:click__stop="true">
                         <input id="failures-search" aria-label="Search failures"
                             type="text"
                             class="input input-sm input-bordered join-item w-44"
@@ -180,7 +179,7 @@
                         <h2 class="text-lg font-semibold">State Machines</h2>
                         <span class="badge badge-sm badge-ghost">Last 10 executions</span>
                     </div>
-                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                    <div class="join join-horizontal" data-on:click__stop="true">
                         <input id="sm-search" aria-label="Search state machines"
                             type="text"
                             class="input input-sm input-bordered join-item w-44"
@@ -189,46 +188,18 @@
                         <select id="sm-env" aria-label="Filter environment"
                             class="select select-sm select-bordered join-item"
                             data-bind="smEnv"
-                            data-on:change="$selectedSm = ''; $selectedSmEnv = ''; @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selected(Sm|SmEnv)$/}})">>>
+                            data-on:change="$selectedSm = ''; @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selectedSm$/}})">
                             <option value="all">All Envs</option>
                             <option value="dev">Dev</option>
                             <option value="qa">QA</option>
                             <option value="prod">Prod</option>
                         </select>
-                        <select id="sm-select" aria-label="Select state machine"
-                            class="select select-sm select-bordered join-item min-w-[250px] max-w-[400px] truncate"
-                            data-bind="selectedSm"
-                            data-on:change="if (evt.target.value) { const opt = evt.target.selectedOptions[0]; $selectedSmEnv = opt.dataset.env; } else { $selectedSmEnv = ''; } @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selected(Sm|SmEnv)$/}})"
-                            data-indicator:sm_exec_loading
-                            data-effect="
-                                const env = $smEnv;
-                                const search = ($smSearch || '').toLowerCase().trim();
-                                const list = $smList || [];
-                                const prev = el.value;
-                                const filtered = list.filter(sm => {
-                                    const envMatch = env === 'all' || sm.baseEnv === env;
-                                    const searchMatch = search === '' || (sm.name + ' ' + sm.env).toLowerCase().includes(search);
-                                    return envMatch && searchMatch;
-                                });
-                                const placeholder = document.createElement('option');
-                                placeholder.value = '';
-                                placeholder.textContent = filtered.length === 0 && list.length > 0 ? 'No matches' : 'Select a state machine...';
-                                const opts = [placeholder, ...filtered.map(sm => {
-                                    const o = document.createElement('option');
-                                    o.value = sm.arn;
-                                    o.dataset.env = sm.env;
-                                    o.dataset.baseEnv = sm.baseEnv;
-                                    o.textContent = sm.name + ' (' + sm.env + ')';
-                                    return o;
-                                })];
-                                el.replaceChildren(...opts);
-                                if (prev && filtered.find(sm => sm.arn === prev)) {
-                                    el.value = prev;
-                                } else if (!prev) {
-                                    el.value = '';
-                                }
-                            ">
-                        </select>
+	                        <select id="sm-select" aria-label="Select state machine"
+	                            class="select select-sm select-bordered join-item min-w-[250px] max-w-[400px] truncate"
+	                            data-bind="selectedSm"
+	                            data-on:change="@post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selectedSm$/}})">
+	                            <option value="">Select a state machine...</option>
+	                        </select>
                     </div>
                 </div>
             </summary>
@@ -250,16 +221,16 @@
                     <div class="flex items-center gap-3">
                         <h2 class="text-lg font-semibold">RDS Performance Insights</h2>
                         <button type="button" class="btn btn-circle btn-ghost btn-xs"
-                                data-on:click="$rds_info_modal_open = true; event.stopPropagation()"
+                                data-on:click__stop="$rds_info_modal_open = true"
                                 aria-label="RDS Performance Insights Guide"
-                                onclick="event.stopPropagation()">
+                                >
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                         </button>
                         <span class="badge badge-sm badge-ghost">Last 2h</span>
                     </div>
-                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                    <div class="join join-horizontal" data-on:click__stop="true">
                         <input id="rds-search" aria-label="Search RDS"
                             type="text"
                             class="input input-sm input-bordered join-item w-44"
@@ -309,7 +280,7 @@
                         <button type="button" class="btn btn-circle btn-ghost btn-xs tooltip tooltip-bottom"
                                 data-tip="Monitors Lambda functions discovered from Step Function executions. Shows timeout usage and performance metrics."
                                 aria-label="Lambda monitoring info"
-                                onclick="event.stopPropagation()">
+                                data-on:click__stop="true">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
@@ -319,7 +290,7 @@
                             <span data-text="$lambda_warnings"></span> Warning<span data-show="$lambda_warnings > 1">s</span>
                         </span>
                     </div>
-                    <div class="join join-horizontal" onclick="event.stopPropagation()">
+                    <div class="join join-horizontal" data-on:click__stop="true">
                         <input id="lambda-search" aria-label="Search Lambda"
                             type="text"
                             class="input input-sm input-bordered join-item w-44"
@@ -390,34 +361,11 @@
                             <option value="qa">QA</option>
                             <option value="prod">Prod</option>
                         </select>
-                        <select id="state_machine" name="state_machine" aria-label="State machine"
-                            class="select select-sm select-bordered"
-                            data-bind="recordSm"
-                            data-effect="
-                                const list = $smList || [];
-                                const env = $recordEnv;
-                                const filtered = list.filter(sm => sm.name.includes('RulesProcessor') && (env === 'all' || sm.baseEnv === env));
-                                const placeholder = document.createElement('option');
-                                placeholder.value = '';
-                                placeholder.textContent = 'All RulesProcessor';
-                                const opts = [placeholder, ...filtered.map(sm => {
-                                    const o = document.createElement('option');
-                                    o.value = sm.arn;
-                                    o.dataset.env = sm.env;
-                                    o.dataset.baseEnv = sm.baseEnv;
-                                    o.textContent = sm.name + ' (' + sm.env + ')';
-                                    return o;
-                                })];
-                                el.replaceChildren(...opts);
-                                const prev = $recordSm;
-                                if (prev && filtered.find(sm => sm.arn === prev)) {
-                                    el.value = prev;
-                                } else {
-                                    el.value = '';
-                                    $recordSm = '';
-                                }
-                            ">
-                        </select>
+	                        <select id="state_machine" name="state_machine" aria-label="State machine"
+	                            class="select select-sm select-bordered"
+	                            data-bind="recordSm">
+	                            <option value="">All RulesProcessor</option>
+	                        </select>
                         <input id="start_date" name="start_date" type="date"
                             class="input input-sm input-bordered"
                             placeholder="Start" />
@@ -626,10 +574,6 @@
         <div class="mb-4">
             <div class="flex items-center justify-between mb-2">
                 <label class="text-sm font-semibold">SQL Query</label>
-                <button class="btn btn-xs btn-ghost"
-                        data-on:click="navigator.clipboard.writeText($rds_query_text); $copyButtonText = 'Copied!'; setTimeout(() => $copyButtonText = 'Copy', 2000)"
-                        data-text="$copyButtonText || 'Copy'">
-                </button>
             </div>
             <div class="mockup-code text-xs max-h-96 overflow-y-auto">
                 <pre class="px-4"><code data-text="$rds_query_text"></code></pre>

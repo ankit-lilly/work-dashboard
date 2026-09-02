@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="camp" data-signals="{ theme: 'camp' }">
+<html lang="en" data-theme="camp" data-signals="{ theme: 'camp' }" data-attr:data-theme="$theme">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -42,27 +42,6 @@
                     </svg>
                 </label>
             </div>
-            <script>
-                // Theme persistence and initialization
-                const savedTheme = localStorage.getItem('theme') || 'camp';
-                document.documentElement.setAttribute('data-theme', savedTheme);
-
-                // Initialize checkbox state based on saved theme
-                const themeToggle = document.querySelector('.theme-controller');
-                if (themeToggle && savedTheme === 'business') {
-                    themeToggle.checked = true;
-                }
-
-                // Listen for theme changes and persist
-                document.addEventListener('change', (e) => {
-                    if (e.target.classList.contains('theme-controller')) {
-                        const theme = e.target.checked ? 'business' : 'camp';
-                        document.documentElement.setAttribute('data-theme', theme);
-                        localStorage.setItem('theme', theme);
-                    }
-                });
-            </script>
-
             {{block "content" .}}{{end}}
         </div>
 

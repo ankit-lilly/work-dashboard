@@ -10,8 +10,7 @@
         </thead>
         <tbody id="active-jobs-body" class="divide-y divide-base-200">
             {{range .Jobs}}
-            <tr class="hover{{if .New}} flash-new{{end}}"
-                data-show="($failuresEnv == 'all' || $failuresEnv == ('{{.Env}}'.includes(':') ? '{{.Env}}'.split(':')[0] : '{{.Env}}')) && ((($failuresSearch || '').trim() == '') || el.innerText.toLowerCase().includes($failuresSearch.toLowerCase()))">
+	            <tr id="active-execution-{{idSafe .ExecutionArn}}" class="hover{{if .New}} flash-new{{end}}">
                 <td>
                     <div class="flex items-center gap-2">
                         <span class="badge badge-ghost badge-sm">
@@ -256,9 +255,12 @@
 <option value="">Select a state machine...</option>
 {{if .StateMachines}}
 {{range .StateMachines}}
-<option value="{{.Arn}}"
+<option id="sm-option-{{idSafe .Env}}-{{idSafe .Arn}}"
+        value="{{.Arn}}"
         data-env="{{.Env}}"
-        data-base-env="{{.BaseEnv}}">
+        data-base-env="{{.BaseEnv}}"
+        data-show="($smEnv == 'all' || $smEnv == '{{.BaseEnv}}') && (($smSearch || '').trim() == '' || el.innerText.toLowerCase().includes($smSearch.toLowerCase()))"
+        {{if eq .Arn $.Selected}}selected{{end}}>
     {{.Name}} ({{.Env}})
 </option>
 {{end}}
@@ -271,33 +273,17 @@
 {{end}}
 {{end}}
 
-{{define "state-machines-list"}}
-<div class="divide-y divide-base-200">
-    {{if .Items}}
-        {{range .Items}}
-        <button class="w-full text-left p-4 hover:bg-base-200/50 transition-colors"
-            data-show="($smEnv == 'all' || $smEnv == '{{.Env}}' || $smEnv == '{{.BaseEnv}}') && el.innerText.toLowerCase().includes($smSearch.toLowerCase())"
-            data-on:click="$selectedSm = '{{.Arn}}'; $selectedSmEnv = '{{.Env}}'; @post('/api/sm/select', {headers: {'X-Session-ID': $__sid}, filterSignals: {include: /^selected(Sm|SmEnv)$/}})"
-            data-indicator:sm_exec_loading
-            data-class="{
-                'bg-primary/10': $selectedSm == '{{.Arn}}',
-                'border-l-4': $selectedSm == '{{.Arn}}',
-                'border-l-primary': $selectedSm == '{{.Arn}}',
-                'font-semibold': $selectedSm == '{{.Arn}}'
-            }">
-            <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0 flex-1">
-                    <div class="text-sm font-medium mb-1">{{.Name}}</div>
-                    <div class="text-xs text-base-content/60 break-words font-mono">{{.Arn}}</div>
-                </div>
-                <span class="badge badge-ghost badge-sm shrink-0">{{.Env}}</span>
-            </div>
-        </button>
-        {{end}}
-    {{else}}
-    <div class="px-4 py-8 text-center text-sm text-base-content/60">No state machines found.</div>
-    {{end}}
-</div>
+{{define "record-state-machine-options"}}
+<option value="">All RulesProcessor</option>
+{{range .StateMachines}}
+{{if contains .Name "RulesProcessor"}}
+<option id="record-sm-option-{{idSafe .Env}}-{{idSafe .Arn}}"
+        value="{{.Arn}}"
+        data-show="$recordEnv == 'all' || $recordEnv == '{{.BaseEnv}}'">
+    {{.Name}} ({{.Env}})
+</option>
+{{end}}
+{{end}}
 {{end}}
 
 {{define "state-machine-executions"}}
@@ -447,9 +433,8 @@
         {{if .HasMore}}
         <div class="p-3 border-t border-base-200">
             <button type="button" class="btn btn-outline btn-xs"
-                data-indicator:sm_exec_loading
-                data-class="{'btn-disabled': $sm_exec_loading}"
-                data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}&append=1&offset={{.Count}}', {openWhenHidden: true, headers: {'X-Session-ID': $__sid}})">>
+	                data-class="{'btn-disabled': $sm_exec_loading}"
+	                data-on:click="@get('/api/state-machine-executions?env={{.Env}}&arn={{.Arn}}&count={{.CountNext}}', {openWhenHidden: true, headers: {'X-Session-ID': $__sid}})">
                 <span data-show="!$sm_exec_loading">Load more</span>
                 <span data-show="$sm_exec_loading" class="inline-flex items-center gap-1" style="display:none">
                     <span class="loading loading-spinner loading-xs"></span>
@@ -462,7 +447,7 @@
         </div>
         {{else}}
         <div class="p-3 text-[11px] text-base-content/50 border-t border-base-200">
-            Showing all {{.Count}} executions
+	            Showing all {{.Total}} executions
         </div>
         {{end}}
     {{end}}
@@ -600,7 +585,7 @@
         </thead>
         <tbody class="divide-y divide-base-200">
             {{range .Failures}}
-            <tr class="hover{{if .New}} flash-new{{end}}"
+	            <tr id="failed-execution-{{idSafe .ExecutionArn}}" class="hover{{if .New}} flash-new{{end}}"
                 data-env="{{.Env}}"
                 data-show="($failuresEnv == 'all' || $failuresEnv == '{{.Env}}'.split(':')[0]) && (($failuresSearch || '').trim() == '' || el.innerText.toLowerCase().includes($failuresSearch.toLowerCase()))">
                 <td>
