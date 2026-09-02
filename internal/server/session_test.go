@@ -57,6 +57,42 @@ func TestLoadMoreBelongsToCurrentSelection(t *testing.T) {
 	}
 }
 
+func TestNewStatesRequestCancelsAndInvalidatesOlderRequest(t *testing.T) {
+	sess := &clientSession{smCount: 10, notify: make(chan struct{}, 1)}
+	ctxA, requestA := sess.beginStatesRequest(context.Background(), "dev", "arn:execution:a", "states-modal-v-1")
+	ctxB, requestB := sess.beginStatesRequest(context.Background(), "qa", "arn:execution:b", "states-modal-v-2")
+
+	select {
+	case <-ctxA.Done():
+	default:
+		t.Fatal("starting a newer modal request did not cancel the older request")
+	}
+	if sess.statesRequestCurrent(requestA) {
+		t.Fatal("older modal request was still considered current")
+	}
+	if !sess.statesRequestCurrent(requestB) {
+		t.Fatal("newer modal request was not considered current")
+	}
+
+	// An older handler finishing must not cancel the newer handler.
+	sess.finishStatesRequest(requestA)
+	select {
+	case <-ctxB.Done():
+		t.Fatal("older handler cleanup cancelled the newer request")
+	default:
+	}
+
+	sess.cancelStatesRequest()
+	select {
+	case <-ctxB.Done():
+	default:
+		t.Fatal("closing the modal did not cancel its request")
+	}
+	if sess.statesRequestCurrent(requestB) {
+		t.Fatal("closed modal request was still considered current")
+	}
+}
+
 func TestStateMachineOptionsAreServerRendered(t *testing.T) {
 	renderer, err := render.NewRenderer(templatesFS)
 	if err != nil {
@@ -78,6 +114,26 @@ func TestStateMachineOptionsAreServerRendered(t *testing.T) {
 	}
 	if strings.Contains(html, "document.") || strings.Contains(html, "fetch(") {
 		t.Fatalf("state-machine options contain custom JavaScript: %s", html)
+	}
+}
+
+func TestStatesViewerUsesOneDatastarActionURL(t *testing.T) {
+	renderer, err := render.NewRenderer(templatesFS)
+	if err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+	html, err := renderer.ExecuteTemplate("index", "states-viewer-link", map[string]string{
+		"Env":          "dev",
+		"ExecutionArn": "arn:execution:test",
+	})
+	if err != nil {
+		t.Fatalf("render states viewer link: %v", err)
+	}
+	if !strings.Contains(html, "@post") || !strings.Contains(html, "/api/execution-states") || !strings.Contains(html, "payload") {
+		t.Fatalf("states viewer does not use the shared Datastar action: %s", html)
+	}
+	if strings.Contains(html, "/api/execution-states?") || strings.Contains(html, "target_id") {
+		t.Fatalf("states viewer still creates a request-specific action URL: %s", html)
 	}
 }
 

@@ -19,7 +19,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// The SSE connection (data-init on the page) pushes a full state
 	// snapshot as soon as the client subscribes, so data arrives
 	// within moments without delaying the initial page load.
-	s.renderer.Render(w, "index", render.DashboardPageData{ActiveNav: "dashboard"})
+	s.renderer.Render(w, "index", render.DashboardPageData{
+		ActiveNav:    "dashboard",
+		BuildVersion: s.buildVersion,
+	})
 }
 
 func parseIntOrDefault(val string, def int) int {

@@ -532,7 +532,7 @@
 {{define "states-viewer-link"}}
 <button type="button"
         class="link link-primary"
-        data-on:click="$statesReq = $statesReq + 1; $states_modal_open = true; @get('/api/execution-states?env={{.Env}}&arn={{.ExecutionArn}}&target_id=states-modal-v-' + $statesReq, {openWhenHidden: true})">
+        data-on:click="$statesReq = $statesReq + 1; $states_modal_open = true; @post('/api/execution-states', {headers: {'X-Session-ID': $__sid}, payload: {env: '{{.Env}}', arn: '{{.ExecutionArn}}', request: $statesReq}})">
     View States
 </button>
 {{end}}
@@ -629,7 +629,7 @@
         {{end}}
     </div>
     <div class="flex items-center gap-2">
-        <button type="button" class="btn btn-ghost btn-xs" data-on:click="$states_modal_open = false; $statesReq = 0">
+        <button type="button" class="btn btn-ghost btn-xs" data-on:click="$states_modal_open = false; @post('/api/execution-states/cancel', {headers: {'X-Session-ID': $__sid}})">
             Close
         </button>
     </div>
@@ -684,4 +684,8 @@
     <div class="p-3 text-xs text-base-content/60">No state history available.</div>
     {{end}}
 </div>
+{{end}}
+
+{{define "states-modal-loading"}}
+<div class="p-4 text-sm text-base-content/60">Loading execution states...</div>
 {{end}}

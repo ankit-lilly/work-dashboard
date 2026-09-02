@@ -1,7 +1,7 @@
 # Radar Dashboard Makefile
 
 BINARY_NAME=radar
-VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION=$(shell git describe --tags --always --dirty --long 2>/dev/null || echo "dev")
 BUILD_DIR=bin
 LDFLAGS=-s -w -X main.version=$(VERSION)
 

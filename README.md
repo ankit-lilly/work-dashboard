@@ -99,7 +99,7 @@ only writer for the state-machine execution DOM.
 ```
 Browser (user interaction)
   |  Command GET /api/state-machine-executions (increase page size)
-  |  SSE GET /api/execution-states (modal)
+  |  SSE POST /api/execution-states (modal; latest request wins)
   |  SSE GET /api/record-search (search)
   |  SSE GET /api/s3-preview-modal (modal)
   v

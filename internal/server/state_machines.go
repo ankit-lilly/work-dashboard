@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -55,16 +56,46 @@ func (s *Server) handleStateMachineExecutions(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Request) {
-	sse := datastar.NewSSE(w, r)
-	env := strings.TrimSpace(r.URL.Query().Get("env"))
-	arn := strings.TrimSpace(r.URL.Query().Get("arn"))
-	targetID := strings.TrimSpace(r.URL.Query().Get("target_id"))
-	if env == "" || arn == "" || targetID == "" {
+	sid := r.Header.Get("X-Session-ID")
+	if sid == "" {
+		http.Error(w, "missing X-Session-ID header", http.StatusBadRequest)
+		return
+	}
+	sess := s.sessions.get(sid)
+	if sess == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
 
+	// All modal opens POST to the same URL, allowing Datastar's automatic
+	// request cancellation to abort the previous client stream. The backend
+	// generation below provides the same guarantee server-side.
+	var signals struct {
+		Env     string `json:"env"`
+		Arn     string `json:"arn"`
+		Request uint64 `json:"request"`
+	}
+	if err := datastar.ReadSignals(r, &signals); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	env := strings.TrimSpace(signals.Env)
+	arn := strings.TrimSpace(signals.Arn)
+	if env == "" || arn == "" || signals.Request == 0 {
+		http.Error(w, "missing env, arn, or request", http.StatusBadRequest)
+		return
+	}
+	targetID := fmt.Sprintf("states-modal-v-%d", signals.Request)
+	ctx, request := sess.beginStatesRequest(r.Context(), env, arn, targetID)
+	defer sess.finishStatesRequest(request)
+
+	sse := datastar.NewSSE(w, r)
+	if html, err := s.renderer.ExecuteTemplate("index", "states-modal-loading", nil); err == nil {
+		sse.PatchElements(html, datastar.WithSelector("#"+targetID), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
+	}
+
 	// Fetch and render immediately
-	status := s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
+	status := s.fetchAndRenderStates(sse, ctx, sess, request)
 
 	// Don't poll if the execution is already in a terminal state.
 	if isTerminalStatus(status) {
@@ -76,10 +107,10 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 	defer ticker.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			status = s.fetchAndRenderStates(sse, r.Context(), env, arn, targetID)
+			status = s.fetchAndRenderStates(sse, ctx, sess, request)
 			if isTerminalStatus(status) {
 				return
 			}
@@ -87,14 +118,29 @@ func (s *Server) handleExecutionStatesModal(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func (s *Server) fetchAndRenderStates(sse *datastar.ServerSentEventGenerator, ctx context.Context, env, arn, targetID string) domain_execution.Status {
+func (s *Server) handleCancelExecutionStates(w http.ResponseWriter, r *http.Request) {
+	sid := r.Header.Get("X-Session-ID")
+	if sid == "" {
+		http.Error(w, "missing X-Session-ID header", http.StatusBadRequest)
+		return
+	}
+	if sess := s.sessions.get(sid); sess != nil {
+		sess.cancelStatesRequest()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) fetchAndRenderStates(sse *datastar.ServerSentEventGenerator, ctx context.Context, sess *clientSession, request statesRequest) domain_execution.Status {
 	fetchCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	stateMachine, status, states, err := s.execService.GetExecutionStates(fetchCtx, env, arn)
+	stateMachine, status, states, err := s.execService.GetExecutionStates(fetchCtx, request.env, request.arn)
+	if ctx.Err() != nil || !sess.statesRequestCurrent(request) {
+		return status
+	}
 	payload := render.ExecutionStatesPayload{
-		Env:          env,
-		ExecutionArn: arn,
+		Env:          request.env,
+		ExecutionArn: request.arn,
 		StateMachine: stateMachine,
 		States:       render.PresentExecutionStates(states),
 	}
@@ -103,8 +149,8 @@ func (s *Server) fetchAndRenderStates(sse *datastar.ServerSentEventGenerator, ct
 	}
 
 	html, execErr := s.renderer.ExecuteTemplate("index", "states-modal-content", payload)
-	if execErr == nil {
-		sse.PatchElements(html, datastar.WithSelector("#"+targetID), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
+	if execErr == nil && sess.statesRequestCurrent(request) {
+		sse.PatchElements(html, datastar.WithSelector("#"+request.targetID), datastar.WithMode(datastar.ElementPatchModeInner), datastar.WithUseViewTransitions(false))
 	}
 	return status
 }

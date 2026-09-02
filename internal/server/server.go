@@ -32,6 +32,7 @@ type Server struct {
 	idleJokeOnce  sync.Once
 	idleJoke      string
 	staticFS      fs.FS
+	buildVersion  string
 
 	// Centralized state — single source of truth for dashboard data.
 	dashboardState *state.DashboardState
@@ -41,7 +42,7 @@ type Server struct {
 	sessions *sessionRegistry
 }
 
-func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Service, rdsService *app_rds.Service, searchService *app_search.Service, cfg *config.Config, staticFS fs.FS, jokeProvider JokeProvider, notify *app_notification.Service) (*Server, error) {
+func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Service, rdsService *app_rds.Service, searchService *app_search.Service, cfg *config.Config, staticFS fs.FS, jokeProvider JokeProvider, notify *app_notification.Service, buildVersion string) (*Server, error) {
 	renderer, err := render.NewRenderer(templatesFS)
 	if err != nil {
 		return nil, err
@@ -56,6 +57,7 @@ func NewServer(execService *app_execution.Service, lambdaService *app_lambda.Ser
 		searchService: searchService,
 		jokeProvider:  jokeProvider,
 		staticFS:      staticFS,
+		buildVersion:  strings.TrimSpace(buildVersion),
 		sessions:      newSessionRegistry(),
 	}
 	s.initState(notify)
@@ -104,7 +106,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux.HandleFunc("/api/state-machine-executions", s.handleStateMachineExecutions)
 	mux.HandleFunc("POST /api/sm/select", s.handleSelectSM)
 	mux.HandleFunc("/api/s3-preview-modal", s.handleS3PreviewModal)
-	mux.HandleFunc("/api/execution-states", s.handleExecutionStatesModal)
+	mux.HandleFunc("POST /api/execution-states", s.handleExecutionStatesModal)
+	mux.HandleFunc("POST /api/execution-states/cancel", s.handleCancelExecutionStates)
 	mux.HandleFunc("/view/json", s.handleS3ViewJSON)
 	mux.HandleFunc("/api/s3-download", s.handleS3Download)
 	mux.HandleFunc("/api/s3-search", s.handleS3Search)

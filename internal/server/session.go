@@ -17,6 +17,8 @@ type clientSession struct {
 	generation uint64 // increments whenever the requested execution view changes
 	execHash   string // content hash of last rendered execution list (for dedup)
 	execCancel context.CancelFunc
+	statesGen  uint64 // increments whenever the execution-states modal request changes
+	statesStop context.CancelFunc
 	notify     chan struct{}
 }
 
@@ -26,6 +28,13 @@ type sessionView struct {
 	count      int
 	generation uint64
 	prevHash   string
+}
+
+type statesRequest struct {
+	generation uint64
+	env        string
+	arn        string
+	targetID   string
 }
 
 func (s *clientSession) view() sessionView {
@@ -110,12 +119,64 @@ func (s *clientSession) isCurrent(view sessionView) bool {
 	return s.generation == view.generation && s.smEnv == view.env && s.smArn == view.arn && s.smCount == view.count
 }
 
+// beginStatesRequest makes this request the only execution-history stream
+// allowed to update this browser session. Starting a newer request cancels the
+// older AWS call and its SSE polling loop.
+func (s *clientSession) beginStatesRequest(parent context.Context, env, arn, targetID string) (context.Context, statesRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.statesStop != nil {
+		s.statesStop()
+	}
+	s.statesGen++
+	ctx, cancel := context.WithCancel(parent)
+	s.statesStop = cancel
+	return ctx, statesRequest{
+		generation: s.statesGen,
+		env:        env,
+		arn:        arn,
+		targetID:   targetID,
+	}
+}
+
+func (s *clientSession) statesRequestCurrent(request statesRequest) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.statesGen == request.generation
+}
+
+func (s *clientSession) finishStatesRequest(request statesRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.statesGen == request.generation {
+		if s.statesStop != nil {
+			s.statesStop()
+		}
+		s.statesStop = nil
+	}
+}
+
+func (s *clientSession) cancelStatesRequest() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.statesGen++
+	if s.statesStop != nil {
+		s.statesStop()
+		s.statesStop = nil
+	}
+}
+
 func (s *clientSession) stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.execCancel != nil {
 		s.execCancel()
 		s.execCancel = nil
+	}
+	if s.statesStop != nil {
+		s.statesStop()
+		s.statesStop = nil
 	}
 }
 

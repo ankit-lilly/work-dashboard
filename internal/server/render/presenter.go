@@ -16,7 +16,8 @@ import (
 )
 
 type DashboardPageData struct {
-	ActiveNav string
+	ActiveNav    string
+	BuildVersion string
 
 	ActiveJobs      []ExecutionView
 	ActiveJobsError error
